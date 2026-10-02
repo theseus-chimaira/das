@@ -8,8 +8,10 @@ The accepted transitional build compiles those two phases with PDP-10 GCC and
 keeps them below the stricter 034000-word regression budget.
 
 Optimize KCC code generation and/or the phase compilation surface until both
-DAS1 and DAS2 meet 034000 words when KCC-built.  Do not raise the loader limit
-or merge the phases to hide this requirement.
+DAS1 and DAS2 meet 034000 words when KCC-built.  Phase-live preprocessing has
+already reduced the KCC measurements to 045630/041346 without changing
+functionality; continue measuring each structural change independently.  Do
+not raise the loader limit or merge the phases to hide this requirement.
 
 ## 2. Extend DAIMOS-resident regression coverage
 

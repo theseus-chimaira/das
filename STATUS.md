@@ -50,10 +50,11 @@ Current measured images with the standard 02000-word process stack are:
   035523 words.
 
 The resident phase-image acceptance budget is 034000 words, below the DAIMOS
-loader's 036000-word hard image ceiling.  The same phase sources built by the
-current KCC measured about 045673 words for DAS1 and 042514 words for DAS2,
-which the loader cannot run.  The public driver therefore uses KCC while the
-two large phases deliberately retain PDP-10 GCC as a transitional build input.
+loader's 036000-word hard image ceiling.  After removing code whose lifetime
+belongs exclusively to the other native phase, current KCC measures 045630
+words for DAS1 and 041346 words for DAS2.  Those images still exceed the
+loader limit, so the public driver uses KCC while the two large phases
+deliberately retain PDP-10 GCC as a transitional build input.
 This is a code-size limitation, not a separate resident ABI: all three images
 use the current DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
 

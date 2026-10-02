@@ -1489,8 +1489,10 @@ static enum das_token classify_token(struct asmctx *c, const char *key)
 }
 static int isname0(int c) { return isalpha((unsigned char)c) || c == '_' || c == '.' || c == '%' || c == '$'; }
 static int isname(int c) { return isalnum((unsigned char)c) || c == '_' || c == '.' || c == '%' || c == '$'; }
+#if !defined(DAS_NATIVE_PHASE1_ONLY)
 static das_word_t parse_octal_w(const char *s) { das_word_t v = 0; while (*s >= '0' && *s <= '7') { v = (v << 3) + (das_word_t)(*s - '0'); s++; } return v & DAS_WORD_MASK; }
 static unsigned int parse_octal_u(const char *s) { return (unsigned int)(parse_octal_w(s) & DAS_HALF_MASK); }
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static int is_octal_end(int c) { return c == 0 || isspace((unsigned char)c) || c == ',' || c == ')' || c == ']' || c == '+' || c == '-'; }
 static int looks_octal_token(const char *s) { if (*s == '+' || *s == '-') s++; if (!(*s >= '0' && *s <= '7')) return 0; while (*s >= '0' && *s <= '7') s++; return is_octal_end((unsigned char)*s); }
@@ -1887,7 +1889,7 @@ static int scratch_open(struct das_wordfile *wf, const char *base,
     return wf->file == 0 ? -1 : 0;
 }
 #endif
-#if !defined(DAS_PHASE2_PROGRAM)
+#if !defined(DAS_PHASE2_PROGRAM) && !defined(DAS_NATIVE_PHASE2_ONLY)
 static int store_init(struct asmctx *c, const char *scratch_base)
 {
     memset(&c->sym_store, 0, sizeof(c->sym_store));
@@ -2104,11 +2106,6 @@ static void add_sym(struct asmctx *c, const char *name, int sec,
     cache->sym.off = value & DAS_WORD_MASK;
 }
 
-static das_word_t visibility_hash(const char *name)
-{
-    return das_mask36(sym_hash(name) ^ DAS_W(0525252525252));
-}
-
 /* Indexed XCT can enter any word in its target table.  Keep a distinct
  * spill-backed marker namespace so this information costs no fixed RAM. */
 static das_word_t indexed_xct_hash(const char *name)
@@ -2145,6 +2142,7 @@ static int find_indexed_xct_marker(struct asmctx *c, const char *name)
     return 0;
 }
 
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
 static void mark_indexed_xct_target(struct asmctx *c, const char *name)
 {
     struct das_sym_store *store;
@@ -2166,6 +2164,13 @@ static void mark_indexed_xct_target(struct asmctx *c, const char *name)
         die("symbol scratch write failed");
     store->heads[bucket] = ref;
     store->records = ref;
+}
+#endif
+
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
+static das_word_t visibility_hash(const char *name)
+{
+    return das_mask36(sym_hash(name) ^ DAS_W(0525252525252));
 }
 
 static int find_visible_marker(struct asmctx *c, const char *name,
@@ -2232,6 +2237,7 @@ static int symbol_visible_here(struct asmctx *c, const char *name)
         return 0;
     return (unsigned int)(marker.off & DAS_HALF_MASK) <= c->source_serial;
 }
+#endif
 
 #ifndef DAS_NATIVE
 static void sym_record_counts(struct asmctx *c, unsigned int *user_records,
@@ -2762,6 +2768,7 @@ static int lit_find_text(struct asmctx *c, const char *expr,
     }
     return 0;
 }
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
 static void add_lit_text(struct asmctx *c, const char *expr, size_t n)
 {
     das_word_t record[DAS_LIT_RECORD_WORDS];
@@ -2789,6 +2796,7 @@ static void add_lit_text(struct asmctx *c, const char *expr, size_t n)
     c->lit_store.words += words;
     c->lit_store.image_words += literal_image_words(expr, len);
 }
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static void lit_stream_reset(struct asmctx *c)
 {
@@ -3990,6 +3998,7 @@ static int parsed_word_count(struct asmctx *c, struct das_parsed_line *line,
     }
     return 1;
 }
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
 static void scan_literals(struct asmctx *c, const char *p)
 {
     const char *q;
@@ -4006,6 +4015,7 @@ static void scan_literals(struct asmctx *c, const char *p)
         q++;
     }
 }
+#endif
 static int psect_to_sec(char *q, int cursec) {
     q = skipws(q);
     if (*q == '"') q++;
@@ -4666,6 +4676,7 @@ static int opt_instruction_overwrites_ac(struct das_parsed_line *parsed,
     return 0;
 }
 
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
 static int opt_indexed_xct_symbol(struct das_parsed_line *parsed,
                                   char *name, size_t namesz)
 {
@@ -4699,6 +4710,7 @@ static int opt_indexed_xct_symbol(struct das_parsed_line *parsed,
     name[n] = 0;
     return 1;
 }
+#endif
 
 static int opt_label_is_indexed_xct_target(struct asmctx *c,
                                            struct das_parsed_line *parsed)
