@@ -54,6 +54,10 @@ including BSS and the standard stack reserve.  The former transitional
 PDP-10 GCC phase build is no longer used.  All three images use the current
 DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
 
+The native phase assembly rules depend on the selected KCC executable itself,
+so installing a new compiler automatically regenerates DAS1/DAS2 assembly in
+incremental builds even when the DAS sources are unchanged.
+
 The resident shrink came from structural lifetime and representation changes
 rather than removing assembler language support: the peephole/folding
 optimizer remains host-only; phase 1 omits phase-2-only instruction decoding;

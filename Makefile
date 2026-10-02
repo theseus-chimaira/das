@@ -76,15 +76,15 @@ native-driver: ${NATIVE_BUILD_DIR}/das.dxr
 
 native-phases: ${NATIVE_BUILD_DIR}/das1.dxr ${NATIVE_BUILD_DIR}/das2.dxr
 
-${NATIVE_BUILD_DIR}/das-driver-v1.s: das_native_driver.c
+${NATIVE_BUILD_DIR}/das-driver-v1.s: das_native_driver.c ${PDP10_KCC}
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${PDP10_KCC} ${NATIVE_KCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
-${NATIVE_BUILD_DIR}/das1-v1.s: das_native1.c das.c das_native_runtime.h
+${NATIVE_BUILD_DIR}/das1-v1.s: das_native1.c das.c das_native_runtime.h ${PDP10_KCC}
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${PDP10_KCC} ${NATIVE_KCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
-${NATIVE_BUILD_DIR}/das2-v1.s: das_native2.c das.c das_native_runtime.h
+${NATIVE_BUILD_DIR}/das2-v1.s: das_native2.c das.c das_native_runtime.h ${PDP10_KCC}
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${PDP10_KCC} ${NATIVE_KCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
