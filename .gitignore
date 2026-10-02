@@ -1,0 +1,9 @@
+pdp10-dec-none-as
+*.o
+das
+dxrcheck
+dxrconvert
+s6text
+s6filter
+
+das2
