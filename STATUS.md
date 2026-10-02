@@ -39,8 +39,15 @@ DAS2 images. The driver runs the phases sequentially through the same versioned
 Current measured images with the standard 02000-word process stack are:
 
 - public DAS driver: image 000455, BSS 000000, process 002455 words;
-- DAS1: image 032715, BSS 002412, process 037327 words;
-- DAS2: image 030405, BSS 002722, process 035327 words.
+- DAS1 with the current KCC path: image 045673, BSS 002410, process 050303
+  words;
+- DAS2 with the current KCC path: image 042514, BSS 002720, process 045434
+  words.
+
+These are the current KCC measurements, not targets.  They are larger than the
+older GCC phase images and therefore make DAS a useful early KCC code-size
+optimization workload.  The phase split still keeps only one large assembler
+phase resident at a time.
 
 DAS1 uses 256 resident symbol hash heads. Symbol capacity remains spill-backed;
 the smaller table saves 0400 resident words versus the previous 512-head table
@@ -135,3 +142,12 @@ numeric syntax instead.
 
 The public phase driver and private phase images build against the current
 DAIMOS ABI and are covered by an end-to-end DAIMOS execution regression.
+
+Native C compilation now uses KCC.  Host DAS assembles the generated source
+and DLINK produces the three DXR images.  The obsolete PDP-10 GCC and private
+native syscall/runtime objects are no longer part of the build.  Host-only
+POSIX support is explicitly selected with DAS_HOST while resident builds use
+DAS_NATIVE.
+
+DAS.SIXMD is the authoritative command manual and is a mandatory validated
+build input.

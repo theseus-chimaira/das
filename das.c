@@ -1,4 +1,11 @@
-#ifndef DAS_NATIVE
+#if defined(DAS_HOST) && defined(DAS_NATIVE)
+#error DAS_HOST and DAS_NATIVE are mutually exclusive
+#endif
+#if !defined(DAS_HOST) && !defined(DAS_NATIVE)
+#define DAS_HOST 1
+#endif
+
+#ifdef DAS_HOST
 #define _POSIX_C_SOURCE 200809L
 #endif
 /* das - DAIMOS DXR V1 assembler, first cut. */
@@ -6,7 +13,7 @@
 #ifndef DAS_NATIVE_CORE_ONLY
 #include "das_native_runtime.h"
 #endif
-#else
+#elif defined(DAS_HOST)
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>

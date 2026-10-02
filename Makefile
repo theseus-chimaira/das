@@ -4,6 +4,7 @@ BINDIR = ${PDP10_PREFIX}/bin
 
 CC = cc
 CFLAGS = -O2
+HOST_CPPFLAGS = -DDAS_HOST
 LN = ln -sf
 RM = rm -f
 RMR = rm -rf
@@ -11,13 +12,17 @@ RMR = rm -rf
 BINARIES = das das2 dxrcheck dxrconvert s6filter s6text
 ALIAS = pdp10-dec-none-as
 PROGRAMS = ${BINARIES} ${ALIAS}
+.PHONY: all manual-check native native-driver native-phases install uninstall clean help FORCE
 
 DAIMOS_REPO ?= ../DAIMOS
 NATIVE_BUILD_DIR ?= build-native-v1
-PDP10_GCC ?= ${PDP10_PREFIX}/bin/pdp10-dec-none-gcc
+PDP10_KCC ?= ${PDP10_PREFIX}/bin/kcc
 PDP10_DLINK ?= ${PDP10_PREFIX}/bin/dlink
 NATIVE_DAS ?= ./das
-NATIVE_CFLAGS ?= -Os -fno-builtin -march=166 -mtune=166
+NATIVE_CFLAGS ?= -Pgnu99 -O -x=pdp6 -m=gas
+SIXMD_CHECK ?= ${PDP10_PREFIX}/bin/sixmd-check
+MANUAL = DAS.SIXMD
+MANUALDIR ?= ${PDP10_PREFIX}/share/daimos/manual
 NATIVE_CPPFLAGS = \
 	-I${DAIMOS_REPO}/system/kernel/boot \
 	-I${DAIMOS_REPO}/system/kernel/core \
@@ -31,16 +36,16 @@ NATIVE_CPPFLAGS = \
 	-I${PDP10_PREFIX}/include
 NATIVE_COMMON_OBJS = \
 	${NATIVE_BUILD_DIR}/crt0-v1.dobj \
-	${NATIVE_BUILD_DIR}/das-native-syscall-v1.dobj \
-	${NATIVE_BUILD_DIR}/das-native-gcc-runtime-v2.dobj
+	${NATIVE_BUILD_DIR}/syscall-v1.dobj \
+	${NATIVE_BUILD_DIR}/syscall-helpers-v1.dobj
 
-all: ${PROGRAMS}
+all: manual-check ${PROGRAMS}
 
 das: das.c das_native_runtime.h
-	${CC} ${CFLAGS} -o $@ das.c
+	${CC} ${CFLAGS} ${HOST_CPPFLAGS} -o $@ das.c
 
 das2: das.c das_native_runtime.h
-	${CC} ${CFLAGS} -DDAS_PHASE2_PROGRAM -o $@ das.c
+	${CC} ${CFLAGS} ${HOST_CPPFLAGS} -DDAS_PHASE2_PROGRAM -o $@ das.c
 
 dxrcheck: dxrcheck.c
 	${CC} ${CFLAGS} -o $@ dxrcheck.c
@@ -57,7 +62,11 @@ s6text: s6text.c
 ${ALIAS}: das
 	${LN} das ${ALIAS}
 
-native: native-driver native-phases
+manual-check: ${MANUAL}
+	@test -x "${SIXMD_CHECK}" || { echo "missing SIXMD validator: ${SIXMD_CHECK}" >&2; exit 1; }
+	${SIXMD_CHECK} ${MANUAL} DAS
+
+native: manual-check native-driver native-phases
 
 native-driver: ${NATIVE_BUILD_DIR}/das.dxr
 
@@ -65,15 +74,15 @@ native-phases: ${NATIVE_BUILD_DIR}/das1.dxr ${NATIVE_BUILD_DIR}/das2.dxr
 
 ${NATIVE_BUILD_DIR}/das-driver-v1.s: das_native_driver.c
 	mkdir -p ${NATIVE_BUILD_DIR}
-	${PDP10_GCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
+	${PDP10_KCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
 ${NATIVE_BUILD_DIR}/das1-v1.s: das_native1.c das.c das_native_runtime.h
 	mkdir -p ${NATIVE_BUILD_DIR}
-	${PDP10_GCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
+	${PDP10_KCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
 ${NATIVE_BUILD_DIR}/das2-v1.s: das_native2.c das.c das_native_runtime.h
 	mkdir -p ${NATIVE_BUILD_DIR}
-	${PDP10_GCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
+	${PDP10_KCC} ${NATIVE_CFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
 ${NATIVE_BUILD_DIR}/das-driver-v1.dobj: ${NATIVE_BUILD_DIR}/das-driver-v1.s das
 	${NATIVE_DAS} -F -C -O $@ $<
@@ -88,11 +97,11 @@ ${NATIVE_BUILD_DIR}/crt0-v1.dobj: ${DAIMOS_REPO}/userland/libc/crt0.s das
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${NATIVE_DAS} -F -C -O $@ $<
 
-${NATIVE_BUILD_DIR}/das-native-syscall-v1.dobj: das_native_syscall_v1.s das
+${NATIVE_BUILD_DIR}/syscall-v1.dobj: ${DAIMOS_REPO}/userland/libc/syscall.s das
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${NATIVE_DAS} -F -C -O $@ $<
 
-${NATIVE_BUILD_DIR}/das-native-gcc-runtime-v2.dobj: das_native_gcc_runtime_v2.s das
+${NATIVE_BUILD_DIR}/syscall-helpers-v1.dobj: ${DAIMOS_REPO}/userland/libc/syscall_helpers.s das
 	mkdir -p ${NATIVE_BUILD_DIR}
 	${NATIVE_DAS} -F -C -O $@ $<
 
@@ -118,6 +127,9 @@ install: all
 		chmod 755 "${DESTDIR}${BINDIR}/$$f" || exit 1; \
 	done
 	cd "${DESTDIR}${BINDIR}" && ${LN} das ${ALIAS}
+	mkdir -p "${DESTDIR}${MANUALDIR}"
+	cp "${MANUAL}" "${DESTDIR}${MANUALDIR}/DAS.SIXMD"
+	chmod 444 "${DESTDIR}${MANUALDIR}/DAS.SIXMD"
 
 uninstall:
 	for f in ${PROGRAMS}; do \
@@ -137,6 +149,7 @@ help:
 	@echo "  make            build host tools"
 	@echo "  make install    install host tools"
 	@echo "  make native     build native DAS, DAS1 and DAS2 DXR images"
+	@echo "  make manual-check validate the authoritative SIXMD manual"
 	@echo "  make native-driver build the public native DAS phase driver"
 	@echo "  make native-phases build private native DAS1/DAS2 images"
 	@echo "  make uninstall  remove installed host tools"
@@ -151,7 +164,7 @@ help:
 	@echo "  CFLAGS          compiler flags"
 	@echo "  DAIMOS_REPO     current DAIMOS source tree, default ../DAIMOS"
 	@echo "  NATIVE_BUILD_DIR versioned native output directory"
-	@echo "  PDP10_GCC       PDP-10 GCC used for low-memory native images"
+	@echo "  PDP10_KCC       current DAIMOS KCC used for native images"
 	@echo "  PDP10_DLINK     DOBJ linker"
 	@echo "  NATIVE_CFLAGS   native PDP-10 compiler flags"
 
