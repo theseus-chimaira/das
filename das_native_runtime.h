@@ -103,55 +103,45 @@ static int strcmp(const char *a, const char *b)
     return (unsigned char)*a - (unsigned char)*b;
 }
 
-static void *memset(void *dst, int ch, size_t n)
+static void das_native_memset(unsigned char *dst, int ch, size_t n)
 {
-    unsigned char *p;
-
-    p = (unsigned char *)dst;
     while (n != 0U) {
-        *p++ = (unsigned char)ch;
+        *dst++ = (unsigned char)ch;
         n--;
     }
-    return dst;
 }
+#define memset(d,c,n) das_native_memset((unsigned char *)(d), (c), (n))
 
-static void *das_native_memcpy(void *dst, const void *src, size_t n)
+static void das_native_memcpy(unsigned char *dst, const unsigned char *src,
+                              size_t n)
 {
-    unsigned char *d;
-    const unsigned char *s;
-
-    d = (unsigned char *)dst;
-    s = (const unsigned char *)src;
     while (n != 0U) {
-        *d++ = *s++;
+        *dst++ = *src++;
         n--;
     }
-    return dst;
 }
-#define memcpy(d,s,n) das_native_memcpy((d),(s),(n))
+#define memcpy(d,s,n) \
+    das_native_memcpy((unsigned char *)(d), (const unsigned char *)(s), (n))
 
-static void *memmove(void *dst, const void *src, size_t n)
+static void das_native_memmove(unsigned char *dst, const unsigned char *src,
+                               size_t n)
 {
-    unsigned char *d;
-    const unsigned char *s;
-
-    d = (unsigned char *)dst;
-    s = (const unsigned char *)src;
-    if (d < s) {
+    if (dst < src) {
         while (n != 0U) {
-            *d++ = *s++;
+            *dst++ = *src++;
             n--;
         }
-    } else if (d > s) {
-        d += n;
-        s += n;
+    } else if (dst > src) {
+        dst += n;
+        src += n;
         while (n != 0U) {
-            *--d = *--s;
+            *--dst = *--src;
             n--;
         }
     }
-    return dst;
 }
+#define memmove(d,s,n) \
+    das_native_memmove((unsigned char *)(d), (const unsigned char *)(s), (n))
 
 static char *strchr(const char *s, int ch)
 {
@@ -196,29 +186,11 @@ static char *strstr(const char *hay, const char *needle)
     return NULL;
 }
 
-static long strtol(const char *s, char **endp, int base)
+static unsigned long das_native_strtoul(const char *s, char **endp, int base)
 {
-    int neg;
     unsigned long v;
     int d;
 
-    while (isspace((unsigned char)*s))
-        s++;
-    neg = 0;
-    if (*s == '+' || *s == '-') {
-        neg = *s == '-';
-        s++;
-    }
-    if (base == 0) {
-        if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-            base = 16;
-            s += 2;
-        } else if (s[0] == '0') {
-            base = 8;
-        } else {
-            base = 10;
-        }
-    }
     v = 0UL;
     for (;;) {
         if (*s >= '0' && *s <= '9')
@@ -236,10 +208,10 @@ static long strtol(const char *s, char **endp, int base)
     }
     if (endp != NULL)
         *endp = (char *)s;
-    return neg ? -(long)v : (long)v;
+    return v;
 }
 
-#define strtoul(s,e,b) ((unsigned long)strtol((s),(e),(b)))
+#define strtoul(s,e,b) das_native_strtoul((s),(e),(b))
 
 static int das_native_pack_path(const char *src, kword_t *dst)
 {

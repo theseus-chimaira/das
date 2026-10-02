@@ -17,17 +17,13 @@ PROGRAMS = ${BINARIES} ${ALIAS}
 DAIMOS_REPO ?= ../DAIMOS
 NATIVE_BUILD_DIR ?= build-native-v1
 PDP10_KCC ?= ${PDP10_PREFIX}/bin/kcc
-PDP10_GCC ?= ${PDP10_PREFIX}/bin/pdp10-dec-none-gcc
 PDP10_DLINK ?= ${PDP10_PREFIX}/bin/dlink
 NATIVE_DAS ?= ./das
 NATIVE_KCCFLAGS ?= -Pgnu99 -O -x=pdp6 -m=gas
-NATIVE_GCCFLAGS ?= -std=c99 -Os -fno-builtin -march=166 -mtune=166
 
-# The public resident driver is small enough for current KCC.  Resident DAS
-# does not compile the host peephole optimizer; KCC DAS2 therefore fits the
-# 034000-word target, while DAS1 remains slightly above the 036000-word loader
-# ceiling.  Keep both large phases on PDP-10 GCC until DAS1 also fits, then
-# switch the pair together so the resident phase toolchain stays uniform.
+# All resident DAS images use KCC.  The native profile omits the host-only
+# peephole optimizer and phase 1 avoids phase-2-only instruction decoding so
+# both large phase images stay below the 034000-word resident budget.
 SIXMD_CHECK ?= ${PDP10_PREFIX}/bin/sixmd-check
 MANUAL = DAS.SIXMD
 MANUALDIR ?= ${PDP10_PREFIX}/share/daimos/manual
@@ -86,11 +82,11 @@ ${NATIVE_BUILD_DIR}/das-driver-v1.s: das_native_driver.c
 
 ${NATIVE_BUILD_DIR}/das1-v1.s: das_native1.c das.c das_native_runtime.h
 	mkdir -p ${NATIVE_BUILD_DIR}
-	${PDP10_GCC} ${NATIVE_GCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
+	${PDP10_KCC} ${NATIVE_KCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
 ${NATIVE_BUILD_DIR}/das2-v1.s: das_native2.c das.c das_native_runtime.h
 	mkdir -p ${NATIVE_BUILD_DIR}
-	${PDP10_GCC} ${NATIVE_GCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
+	${PDP10_KCC} ${NATIVE_KCCFLAGS} ${NATIVE_CPPFLAGS} -S $< -o $@
 
 ${NATIVE_BUILD_DIR}/das-driver-v1.dobj: ${NATIVE_BUILD_DIR}/das-driver-v1.s das
 	${NATIVE_DAS} -F -C -O $@ $<
@@ -121,14 +117,12 @@ ${NATIVE_BUILD_DIR}/das.dxr: ${NATIVE_BUILD_DIR}/das-driver-v1.dobj ${NATIVE_COM
 ${NATIVE_BUILD_DIR}/das1.dxr: ${NATIVE_BUILD_DIR}/das1-v1.dobj ${NATIVE_COMMON_OBJS}
 	${PDP10_DLINK} --daimos-uuo-relax -b 020 -o $@ \
 		-M ${NATIVE_BUILD_DIR}/das1-v1.map ${NATIVE_COMMON_OBJS} \
-		${NATIVE_BUILD_DIR}/das1-v1.dobj \
-		`${PDP10_GCC} -print-libgcc-file-name`
+		${NATIVE_BUILD_DIR}/das1-v1.dobj
 
 ${NATIVE_BUILD_DIR}/das2.dxr: ${NATIVE_BUILD_DIR}/das2-v1.dobj ${NATIVE_COMMON_OBJS}
 	${PDP10_DLINK} --daimos-uuo-relax -b 020 -o $@ \
 		-M ${NATIVE_BUILD_DIR}/das2-v1.map ${NATIVE_COMMON_OBJS} \
-		${NATIVE_BUILD_DIR}/das2-v1.dobj \
-		`${PDP10_GCC} -print-libgcc-file-name`
+		${NATIVE_BUILD_DIR}/das2-v1.dobj
 
 install: all
 	mkdir -p "${DESTDIR}${BINDIR}"
@@ -174,10 +168,8 @@ help:
 	@echo "  CFLAGS          compiler flags"
 	@echo "  DAIMOS_REPO     current DAIMOS source tree, default ../DAIMOS"
 	@echo "  NATIVE_BUILD_DIR versioned native output directory"
-	@echo "  PDP10_KCC       current DAIMOS KCC used for the small resident driver"
-	@echo "  PDP10_GCC       PDP-10 GCC used for low-memory DAS1/DAS2 images"
+	@echo "  PDP10_KCC       current DAIMOS KCC used for all resident DAS images"
 	@echo "  PDP10_DLINK     DOBJ linker"
-	@echo "  NATIVE_KCCFLAGS KCC flags for the resident driver"
-	@echo "  NATIVE_GCCFLAGS GCC flags for the resident phases"
+	@echo "  NATIVE_KCCFLAGS KCC flags for all resident DAS images"
 
 FORCE:

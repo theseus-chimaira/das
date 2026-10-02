@@ -40,10 +40,10 @@ MAKE NATIVE PDP10_PREFIX=/PATH/TO/PDP10-PREFIX DAIMOS_REPO=/PATH/TO/DAIMOS
 
 Host-only POSIX support is selected with "DAS_HOST"; DAIMOS-resident builds
 select "DAS_NATIVE".  The modes are mutually exclusive and one must be chosen.
-The small resident driver is compiled by KCC.  DAS1/DAS2 currently use the
-PDP-10 GCC backend because KCC DAS1 still exceeds DAIMOS's resident image
-limit; KCC DAS2 is already below the stricter resident target.  All resident
-images nevertheless use the current DAIMOS CRT0/syscall ABI and are linked by
+The resident driver and both private phases are compiled by KCC.  The native
+profile omits host-only optimizer machinery and phase-2-only decoding work so
+each resident phase remains below the DAIMOS image/process budgets.  All
+resident images use the current DAIMOS CRT0/syscall ABI and are linked by
 DLINK.  See "STATUS.md" for measured phase sizes.
 
 The native installation keeps only the public command on the normal optional

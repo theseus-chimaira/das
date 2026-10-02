@@ -989,10 +989,10 @@ int das_native_selftest(void)
 #define DAS_MAX_WORK_WORDS 65536U
 #define DAS_TARGET_CHARS_PER_WORD 4U
 #ifdef DAS_NATIVE
-#define DAS_SYM_BUCKETS 256U
+#define DAS_SYM_BUCKETS 128U
 /* Native symbol capacity is spill-backed, so the bucket array is only a
- * lookup accelerator.  Keep both phases at 256 buckets: this removes 0400
- * resident words from phase 1 without changing symbol capacity or semantics. */
+ * lookup accelerator.  128 heads keep the resident index compact without
+ * changing symbol capacity or semantics; collisions remain spill-backed. */
 #define DAS_SYM_CACHE_ENTRIES 13U
 #define DAS_PARSER_WORK_WORDS 1536U
 #else
@@ -1085,6 +1085,7 @@ struct das_parsed_line {
     char *rest;
     char key[DAS_MAX_NAME + 1];
     enum das_token token;
+#if !defined(DAS_NATIVE_PHASE1_ONLY) || DAS_ENABLE_OPTIMIZER
     das_word_t mnemonic;
     unsigned int operand_ac;
     unsigned int operand_reg;
@@ -1094,6 +1095,7 @@ struct das_parsed_line {
     int operand_is_reg;
     int operand_is_integer;
     int operand_integer_negative;
+#endif
     int was_pseudo;
 };
 #define DAS_MAX_COND_DEPTH 18U
@@ -1573,6 +1575,7 @@ static int das_kernel_mode = 0;
 static int das_memory_report = 0;
 static const char *das_labels_out = 0;
 #endif
+#if !defined(DAS_NATIVE_PHASE1_ONLY)
 static int lookup_extra_op_mn(das_word_t m)
 {
     struct op_entry {
@@ -1626,6 +1629,7 @@ static int lookup_op(const char *s, int *nonbase)
         *nonbase = 1;
     return op;
 }
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static int lookup_fixed_ac_alias(const char *s, unsigned int *op, unsigned int *ac)
 {
@@ -1700,6 +1704,58 @@ static int lookup_fixed_ac_alias(const char *s, unsigned int *op, unsigned int *
     return 0;
 }
 #endif
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+/* Pass 1 only needs to know whether a token denotes an instruction when it
+ * sizes/canonicalizes literals.  Keep non-base and I/O names as one compact
+ * membership table; opcode values belong exclusively to phase 2. */
+static int opcode_name_known(const char *s)
+{
+    static const das_word_t extra[] = {
+        DAS_OP5('P','M','O','V','E'),
+        DAS_OP6('P','M','O','V','E','M'),
+        DAS_OP4('U','J','E','N'),
+        DAS_OP4('G','F','A','D'),
+        DAS_OP4('G','F','S','B'),
+        DAS_OP4('J','S','Y','S'),
+        DAS_OP4('G','F','M','P'),
+        DAS_OP4('G','F','D','V'),
+        DAS_OP4('C','I','R','C'),
+        DAS_OP5('A','P','R','I','D'),
+        DAS_OP5('U','M','O','V','E'),
+        DAS_OP6('U','M','O','V','E','M'),
+        DAS_OP4('T','I','O','E'),
+        DAS_OP4('T','I','O','N'),
+        DAS_OP4('R','D','I','O'),
+        DAS_OP4('W','R','I','O'),
+        DAS_OP4('B','S','I','O'),
+        DAS_OP4('B','C','I','O'),
+        DAS_OP5('T','I','O','E','B'),
+        DAS_OP5('T','I','O','N','B'),
+        DAS_OP5('R','D','I','O','B'),
+        DAS_OP5('W','R','I','O','B'),
+        DAS_OP5('B','S','I','O','B'),
+        DAS_OP5('B','C','I','O','B'),
+        DAS_OP4('B','L','K','I'),
+        DAS_OP5('D','A','T','A','I'),
+        DAS_OP4('B','L','K','O'),
+        DAS_OP5('D','A','T','A','O'),
+        DAS_OP4('C','O','N','O'),
+        DAS_OP4('C','O','N','I'),
+        DAS_OP5('C','O','N','S','Z'),
+        DAS_OP5('C','O','N','S','O')
+    };
+    das_word_t m;
+    unsigned int i;
+
+    m = sixbit_mn(s);
+    if (lookup_op_mn(m, 0) >= 0)
+        return 1;
+    for (i = 0U; i < (unsigned int)(sizeof(extra) / sizeof(extra[0])); i++)
+        if (extra[i] == m)
+            return 1;
+    return 0;
+}
+#else
 static int lookup_io(const char *s)
 {
     static const das_word_t table[] = {
@@ -1721,6 +1777,11 @@ static int lookup_io(const char *s)
             return (int)i;
     return -1;
 }
+static int opcode_name_known(const char *s)
+{
+    return lookup_op(s, (int *)0) >= 0 || lookup_io(s) >= 0;
+}
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static das_word_t das_enc_io(unsigned int dev, unsigned int fn, int ind, int xr, unsigned int y) { return das_mask36((DAS_W(7) << 33) | ((das_word_t)((dev >> 2) & 0177U) << 26) | ((das_word_t)(fn & 7U) << 23) | ((das_word_t)(ind & 1) << 22) | ((das_word_t)(xr & 017) << 18) | (y & DAS_HALF_MASK)); }
 #endif
@@ -2505,7 +2566,7 @@ static unsigned int literal_image_words(const char *expr, unsigned int len)
     if (n != 0U) {
         if (mnem[0] == '.')
             memmove(mnem, mnem + 1, strlen(mnem));
-        if (lookup_op(mnem, (int *)0) >= 0 || lookup_io(mnem) >= 0)
+        if (opcode_name_known(mnem))
             return 1U;
     }
     comma = strchr(p, ',');
@@ -2632,7 +2693,6 @@ static int literal_first_token_is_operator(const char *expr, const char *end)
 {
     char name[DAS_MAX_NAME + 1];
     unsigned int n;
-    int dummy;
 
     n = (unsigned int)(end - expr);
     if (n == 0U || n > DAS_MAX_NAME)
@@ -2641,7 +2701,7 @@ static int literal_first_token_is_operator(const char *expr, const char *end)
     name[n] = 0;
     if (name[0] == '.')
         memmove(name, name + 1, strlen(name));
-    if (lookup_op(name, &dummy) >= 0 || lookup_io(name) >= 0)
+    if (opcode_name_known(name))
         return 1;
     if (pref_i(name, "POINT", 5) || pref_i(name, "GIW", 3) ||
         pref_i(name, "OWGBP", 5) || pref_i(name, "%EXIND", 6))
@@ -2667,7 +2727,7 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
     int first_token;
 
     if (cap == 0U)
-        return -1;
+        goto fail;
     p = expr;
     end = expr + len;
     used = 0U;
@@ -2676,7 +2736,7 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
     while (p < end) {
         if (quote != 0) {
             if (used + 1U >= cap)
-                return -1;
+                goto fail;
             out[used++] = *p;
             if (*p == quote)
                 quote = 0;
@@ -2686,7 +2746,7 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
         if (*p == '\'' || *p == '"') {
             quote = (unsigned char)*p;
             if (used + 1U >= cap)
-                return -1;
+                goto fail;
             out[used++] = *p++;
             continue;
         }
@@ -2725,12 +2785,12 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
                 }
                 n = (unsigned int)strlen(rep);
                 if (used + n >= cap)
-                    return -1;
+                    goto fail;
                 memcpy(out + used, rep, n);
                 used += n;
             } else {
                 if (used + n >= cap)
-                    return -1;
+                    goto fail;
                 memcpy(out + used, p, n);
                 used += n;
             }
@@ -2741,11 +2801,14 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
         if (!isspace((unsigned char)*p))
             first_token = 0;
         if (used + 1U >= cap)
-            return -1;
+            goto fail;
         out[used++] = *p++;
     }
     out[used] = 0;
     return (int)used;
+
+fail:
+    return -1;
 }
 
 static int lit_find_text(struct asmctx *c, const char *expr,
@@ -2956,10 +3019,12 @@ parse_expr_integer_base(char **pp, das_word_t *value, int default_base)
     return 0;
 }
 
+#if !defined(DAS_NATIVE_PHASE1_ONLY) || DAS_ENABLE_OPTIMIZER
 static __inline__ int parse_expr_integer(char **pp, das_word_t *value)
 {
     return parse_expr_integer_base(pp, value, 8);
 }
+#endif
 
 static int opt_octal_ac(const char **pp, unsigned int *ac);
 
@@ -4096,6 +4161,7 @@ static int parse_line_head(struct asmctx *c, char *line,
     parsed->rest = 0;
     parsed->key[0] = 0;
     parsed->token = DAS_TOK_OTHER;
+#if !defined(DAS_NATIVE_PHASE1_ONLY) || DAS_ENABLE_OPTIMIZER
     parsed->mnemonic = 0;
     parsed->operand_ac = 0U;
     parsed->operand_reg = 0U;
@@ -4105,6 +4171,7 @@ static int parse_line_head(struct asmctx *c, char *line,
     parsed->operand_is_reg = 0;
     parsed->operand_is_integer = 0;
     parsed->operand_integer_negative = 0;
+#endif
     parsed->was_pseudo = 0;
     p = strchr(line, ';');
     if (p != 0)
@@ -4139,6 +4206,7 @@ static int parse_line_head(struct asmctx *c, char *line,
     parsed->key[i] = 0;
     parsed->rest = skipws(q + i);
     parsed->token = classify_token(c, parsed->key);
+#if !defined(DAS_NATIVE_PHASE1_ONLY) || DAS_ENABLE_OPTIMIZER
     if (parsed->token == DAS_TOK_OTHER) {
         const char *op;
 
@@ -4167,6 +4235,7 @@ static int parse_line_head(struct asmctx *c, char *line,
             }
         }
     }
+#endif
     c->parser_classifications++;
     return 1;
 }
@@ -4179,33 +4248,6 @@ static int cond_active(const struct das_cond_state *cond)
         return 1;
     bit = DAS_W(1) << (cond->depth - 1U);
     return (cond->active_bits & bit) != 0;
-}
-
-static int conditional_prefix(const char *line)
-{
-    const char *p;
-
-    p = line;
-    while (*p != 0 && isspace((unsigned char)*p))
-        p++;
-    if (*p == '.')
-        p++;
-    if (pref_i(p, "IFDEF", 5) &&
-        (p[5] == 0 || isspace((unsigned char)p[5])))
-        return 1;
-    if (pref_i(p, "IFNDEF", 6) &&
-        (p[6] == 0 || isspace((unsigned char)p[6])))
-        return 1;
-    if (pref_i(p, "IF", 2) &&
-        (p[2] == 0 || isspace((unsigned char)p[2])))
-        return 1;
-    if (pref_i(p, "ELSE", 4) &&
-        (p[4] == 0 || isspace((unsigned char)p[4])))
-        return 1;
-    if (pref_i(p, "ENDIF", 5) &&
-        (p[5] == 0 || isspace((unsigned char)p[5])))
-        return 1;
-    return 0;
 }
 
 static int conditional_symbol_arg(char *rest, char *name, size_t namesz)
@@ -4238,8 +4280,6 @@ static int conditional_line(struct asmctx *c, char *line,
     int reloc;
 
     *handled = 0;
-    if (!conditional_prefix(line))
-        return 0;
     if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
     if (!streqi(parsed.key, "IF") && !streqi(parsed.key, "IFDEF") &&
@@ -4251,7 +4291,7 @@ static int conditional_line(struct asmctx *c, char *line,
         fprintf(stderr, DAS_DIAG("das: bad conditional\n",
             "das: conditional directive cannot define a label: %s\n"),
             parsed.stmt);
-        return 1;
+        goto fail;
     }
     if (streqi(parsed.key, "IF") || streqi(parsed.key, "IFDEF") ||
         streqi(parsed.key, "IFNDEF")) {
@@ -4259,7 +4299,7 @@ static int conditional_line(struct asmctx *c, char *line,
             fprintf(stderr, DAS_DIAG("das: bad if\n",
                 "das: malformed or too-deep .if directive: %s\n"),
                 parsed.stmt);
-            return 1;
+            goto fail;
         }
         parent_active = cond_active(cond);
         bit = DAS_W(1) << cond->depth;
@@ -4271,7 +4311,7 @@ static int conditional_line(struct asmctx *c, char *line,
                     fprintf(stderr, DAS_DIAG("das: bad if expr\n",
                         "das: .if requires an absolute expression: %s\n"),
                         parsed.stmt);
-                    return 1;
+                    goto fail;
                 }
                 if (value != DAS_W(0))
                     cond->active_bits |= bit;
@@ -4282,7 +4322,7 @@ static int conditional_line(struct asmctx *c, char *line,
                     "das: malformed .%s directive: %s\n"),
                     streqi(parsed.key, "IFDEF") ? "ifdef" : "ifndef",
                     parsed.stmt);
-                return 1;
+                goto fail;
             }
             if (parent_active) {
                 int visible;
@@ -4300,14 +4340,14 @@ static int conditional_line(struct asmctx *c, char *line,
     if (*skipws(parsed.rest) != 0 || cond->depth == 0U) {
         fprintf(stderr, DAS_DIAG("das: bad conditional\n",
             "das: unmatched or malformed .%s directive\n"), parsed.key);
-        return 1;
+        goto fail;
     }
     bit = DAS_W(1) << (cond->depth - 1U);
     if (streqi(parsed.key, "ELSE")) {
         if ((cond->else_bits & bit) != 0) {
             fprintf(stderr, DAS_DIAG("das: duplicate else\n",
                 "das: duplicate .else directive\n"));
-            return 1;
+            goto fail;
         }
         cond->else_bits |= bit;
         if (cond->depth == 1U)
@@ -4325,6 +4365,9 @@ static int conditional_line(struct asmctx *c, char *line,
     cond->active_bits &= ~bit;
     cond->else_bits &= ~bit;
     return 0;
+
+fail:
+    return 1;
 }
 #endif
 
@@ -7237,36 +7280,10 @@ static void join_path(const char *dir, const char *name, char *out, size_t outsz
     out[dlen] = '/';
     memcpy(out + dlen + 1U, name, nlen + 1U);
 }
-static int rept_prefix(const char *line)
-{
-    const char *p;
-
-    p = line;
-    while (*p != 0 && isspace((unsigned char)*p))
-        p++;
-    if (*p == '.')
-        p++;
-    if (pref_i(p, "REPT", 4) &&
-        (p[4] == 0 || isspace((unsigned char)p[4])))
-        return 1;
-    if (pref_i(p, "IRP", 3) &&
-        (p[3] == 0 || isspace((unsigned char)p[3])))
-        return 1;
-    if (pref_i(p, "IRPC", 4) &&
-        (p[4] == 0 || isspace((unsigned char)p[4])))
-        return 1;
-    if (pref_i(p, "ENDR", 4) &&
-        (p[4] == 0 || isspace((unsigned char)p[4])))
-        return 1;
-    return 0;
-}
-
 static int rept_structure_kind(struct asmctx *c, char *line)
 {
     struct das_parsed_line parsed;
 
-    if (!rept_prefix(line))
-        return 0;
     if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
     if (streqi(parsed.key, "REPT") || streqi(parsed.key, "IRP") ||
@@ -7286,8 +7303,6 @@ static int rept_count_line(struct asmctx *c, char *line, unsigned int dot,
     int reloc;
 
     *kind = 0;
-    if (!rept_prefix(line))
-        return 0;
     if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
     if (!streqi(parsed.key, "REPT") && !streqi(parsed.key, "IRP") &&
@@ -7531,7 +7546,7 @@ static int iter_irp_next(struct asmctx *c, unsigned int values_pos,
 #endif
     if (rept_store_read_line(c, values_pos, c->rept_spill.words,
             line, &next) != 0)
-        return -1;
+        goto fail;
     len = (unsigned int)strlen(line);
     if (len == 0U) {
         if (*started)
@@ -7553,7 +7568,7 @@ static int iter_irp_next(struct asmctx *c, unsigned int values_pos,
         ch = (unsigned int)(unsigned char)line[pos];
         if (quote != 0U) {
             if (ch == 0U)
-                return -1;
+                goto fail;
             if (escape)
                 escape = 0;
             else if (ch == '\\')
@@ -7572,34 +7587,37 @@ static int iter_irp_next(struct asmctx *c, unsigned int values_pos,
             paren++;
         else if (ch == ')') {
             if (paren == 0U)
-                return -1;
+                goto fail;
             paren--;
         } else if (ch == '[')
             bracket++;
         else if (ch == ']') {
             if (bracket == 0U)
-                return -1;
+                goto fail;
             bracket--;
         } else if (ch == '{')
             brace++;
         else if (ch == '}') {
             if (brace == 0U)
-                return -1;
+                goto fail;
             brace--;
         }
         if ((ch == ',' || ch == 0U) && paren == 0U && bracket == 0U &&
             brace == 0U)
             break;
         if (ch == 0U)
-            return -1;
+            goto fail;
         pos++;
     }
     last = line + pos;
     *cursor = line[pos] == ',' ? pos + 1U : len;
     *started = 1U;
     if (iter_store_value_slice(c, line, first, last, value_pos) != 0)
-        return -1;
+        goto fail;
     return 1;
+
+fail:
+    return -1;
 }
 
 static int iter_irpc_next(struct asmctx *c, unsigned int values_pos,
@@ -8213,20 +8231,20 @@ static int macro_parse_definition(struct asmctx *c, char *line,
         fprintf(stderr, DAS_DIAG("das: bad macro\n",
             "das: .macro directive cannot define a label: %s\n"),
             parsed.stmt);
-        return -1;
+        goto fail;
     }
     p = skipws(parsed.rest);
     if (!isname0((unsigned char)*p)) {
         fprintf(stderr, DAS_DIAG("das: bad macro\n",
             "das: malformed .macro definition: %s\n"), parsed.stmt);
-        return -1;
+        goto fail;
     }
     n = 0U;
     while (isname((unsigned char)*p)) {
         if (n + 1U >= namesz) {
             fprintf(stderr, DAS_DIAG("das: macro name long\n",
                 "das: macro name is too long\n"));
-            return -1;
+            goto fail;
         }
         name[n++] = *p++;
     }
@@ -8235,13 +8253,13 @@ static int macro_parse_definition(struct asmctx *c, char *line,
     if (n >= DAS_MAX_NAME) {
         fprintf(stderr, DAS_DIAG("das: macro name long\n",
             "das: macro name is too long\n"));
-        return -1;
+        goto fail;
     }
     if (macro_name_reserved(c, name)) {
         fprintf(stderr, DAS_DIAG("das: macro name reserved\n",
             "das: macro name conflicts with an instruction or directive: %s\n"),
             name);
-        return -1;
+        goto fail;
     }
     p = skipws(p);
     if (*p == 0)
@@ -8256,7 +8274,7 @@ static int macro_parse_definition(struct asmctx *c, char *line,
         if (!isname0((unsigned char)*p)) {
             fprintf(stderr, DAS_DIAG("das: bad macro args\n",
                 "das: malformed .macro parameter list\n"));
-            return -1;
+            goto fail;
         }
         a = p;
         while (isname((unsigned char)*p))
@@ -8266,14 +8284,14 @@ static int macro_parse_definition(struct asmctx *c, char *line,
             fprintf(stderr, DAS_DIAG("das: dup macro arg\n",
                 "das: duplicate macro parameter: %.*s\n"),
                 (int)pn, a);
-            return -1;
+            goto fail;
         }
         count++;
         if (count > DAS_MAX_MACRO_ARGS) {
             fprintf(stderr, DAS_DIAG("das: macro args many\n",
                 "das: macro has more than %u parameters\n"),
                 DAS_MAX_MACRO_ARGS);
-            return -1;
+            goto fail;
         }
         p = skipws(p);
         if (*p == 0)
@@ -8281,71 +8299,27 @@ static int macro_parse_definition(struct asmctx *c, char *line,
         if (*p != ',') {
             fprintf(stderr, DAS_DIAG("das: bad macro args\n",
                 "das: macro parameters must be comma-separated\n"));
-            return -1;
+            goto fail;
         }
         p++;
         if (*skipws(p) == 0) {
             fprintf(stderr, DAS_DIAG("das: bad macro args\n",
                 "das: trailing comma in .macro parameter list\n"));
-            return -1;
+            goto fail;
         }
     }
     *argc = count;
     return 1;
-}
 
-static int macro_scan_head(char *line, struct das_parsed_line *parsed)
-{
-    char *p;
-    char *colon;
-    char *q;
-    size_t n;
-    unsigned int i;
-
-    parsed->label = 0;
-    parsed->label_len = 0U;
-    parsed->stmt = 0;
-    parsed->rest = 0;
-    parsed->key[0] = 0;
-    p = strchr(line, ';');
-    if (p != 0)
-        *p = 0;
-    rtrim(line);
-    p = skipws(line);
-    if (*p == 0)
-        return 0;
-    colon = strchr(p, ':');
-    if (colon != 0) {
-        n = char_distance(p, colon);
-        while (n != 0U && isspace((unsigned char)p[n - 1U]))
-            n--;
-        parsed->label = p;
-        parsed->label_len = n;
-        p = skipws(colon + 1);
-        if (*p == 0)
-            return 1;
-    }
-    parsed->stmt = p;
-    q = p;
-    if (*q == '.')
-        q++;
-    i = 0U;
-    while (q[i] != 0 && !isspace((unsigned char)q[i]) &&
-           i < DAS_MAX_NAME) {
-        parsed->key[i] = q[i];
-        i++;
-    }
-    parsed->key[i] = 0;
-    parsed->rest = skipws(q + i);
-    return 1;
+fail:
+    return -1;
 }
 
 static int macro_structure_kind(struct asmctx *c, char *line)
 {
     struct das_parsed_line parsed;
 
-    (void)c;
-    if (macro_scan_head(line, &parsed) == 0 || parsed.stmt == 0)
+    if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
     if (streqi(parsed.key, "MACRO"))
         return 1;
@@ -8400,7 +8374,7 @@ static int macro_arg_scan(const char *s, unsigned int wanted,
         ch = (unsigned int)(unsigned char)*p;
         if (quote != 0U) {
             if (ch == 0U)
-                return -1;
+                goto fail;
             if (escape)
                 escape = 0;
             else if (ch == '\\')
@@ -8416,13 +8390,13 @@ static int macro_arg_scan(const char *s, unsigned int wanted,
             continue;
         }
         if (ch == 0U && (paren != 0U || bracket != 0U || brace != 0U))
-            return -1;
+            goto fail;
         if (ch == '(') paren++;
-        else if (ch == ')') { if (paren == 0U) return -1; paren--; }
+        else if (ch == ')') { if (paren == 0U) goto fail; paren--; }
         else if (ch == '[') bracket++;
-        else if (ch == ']') { if (bracket == 0U) return -1; bracket--; }
+        else if (ch == ']') { if (bracket == 0U) goto fail; bracket--; }
         else if (ch == '{') brace++;
-        else if (ch == '}') { if (brace == 0U) return -1; brace--; }
+        else if (ch == '}') { if (brace == 0U) goto fail; brace--; }
         if ((ch == ',' || ch == 0U || ch == ';') &&
             paren == 0U && bracket == 0U && brace == 0U) {
             end = p;
@@ -8431,7 +8405,7 @@ static int macro_arg_scan(const char *s, unsigned int wanted,
             while (start < end && isspace((unsigned char)*start))
                 start++;
             if (start == end)
-                return -1;
+                goto fail;
             if (n == wanted && arg != 0 && arglen != 0) {
                 *arg = start;
                 *arglen = char_distance(start, end);
@@ -8443,12 +8417,15 @@ static int macro_arg_scan(const char *s, unsigned int wanted,
                 continue;
             }
             if (paren != 0U || bracket != 0U || brace != 0U)
-                return -1;
+                goto fail;
             *count = n;
             return 0;
         }
         p++;
     }
+
+fail:
+    return -1;
 }
 
 static int macro_param_index(struct asmctx *c, unsigned int def_pos,
@@ -8634,11 +8611,11 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
             if (*q == 0) {
                 fprintf(stderr, DAS_DIAG("das: bad macro escape\n",
                     "das: trailing backslash in macro body\n"));
-                return -1;
+                goto fail;
             }
             if (*q == '\\') {
                 if (macro_append_text(out, outsz, &used, "\\", 1U) != 0)
-                    return -1;
+                    goto fail;
                 if (quote != 0U)
                     escape = 1;
                 p += 2;
@@ -8655,7 +8632,7 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
                 nn = (int)das_format_u10(num, call_id);
                 if (macro_append_text(out, outsz, &used,
                         num, (size_t)nn) != 0)
-                    return -1;
+                    goto fail;
                 p += 2;
                 continue;
             }
@@ -8666,7 +8643,7 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
                     fprintf(stderr, DAS_DIAG("das: bad macro arg\n",
                         "das: invalid positional macro argument \\%u\n"),
                         index);
-                    return -1;
+                    goto fail;
                 }
                 p += 2;
                 continue;
@@ -8686,7 +8663,7 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
                 if (found == 0) {
                     if (macro_append_arg(c, arg_pos, index, out, outsz,
                             &used, scratch) != 0)
-                        return -1;
+                        goto fail;
                     p = q;
                     continue;
                 }
@@ -8697,21 +8674,21 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
                     continue;
                 }
                 if (iter_found < 0) {
-                    return -1;
+                    goto fail;
                 }
                 {
                     fprintf(stderr, DAS_DIAG("das: unknown macro arg\n",
                         "das: unknown macro parameter in substitution: %.*s\n"),
                         (int)n, a);
-                    return -1;
+                    goto fail;
                 }
             }
             fprintf(stderr, DAS_DIAG("das: bad macro escape\n",
                 "das: malformed macro substitution escape\n"));
-            return -1;
+            goto fail;
         }
         if (macro_append_text(out, outsz, &used, p, 1U) != 0)
-            return -1;
+            goto fail;
         if (escape) {
             escape = 0;
         } else if (quote != 0U && (unsigned int)(unsigned char)*p == quote) {
@@ -8722,6 +8699,9 @@ static int macro_substitute_line(struct asmctx *c, unsigned int def_pos,
         p++;
     }
     return 0;
+
+fail:
+    return -1;
 }
 
 static int macro_lookup(struct asmctx *c, const char *name,
@@ -8806,17 +8786,17 @@ static int capture_rept_body(struct asmctx *c, struct das_char_reader *reader,
         if (lr == DAS_INPUT_EOF) {
             fprintf(stderr, DAS_DIAG("das: unterminated rept\n",
                 "das: unterminated .rept directive\n"));
-            return -1;
+            goto fail;
         }
         if (lr == DAS_INPUT_TOOLONG) {
             fprintf(stderr, DAS_DIAG("das: long line\n",
                 "das: source line too long in .rept body\n"));
-            return -1;
+            goto fail;
         }
         if (lr == DAS_INPUT_ERROR) {
             fprintf(stderr, DAS_DIAG("das: bad input\n",
                 "das: malformed input in .rept body\n"));
-            return -1;
+            goto fail;
         }
         strcopy(tmp, line, DAS_MAX_LINE);
         kind = rept_structure_kind(c, tmp);
@@ -8828,18 +8808,21 @@ static int capture_rept_body(struct asmctx *c, struct das_char_reader *reader,
             if (active_depth + nested >= DAS_MAX_REPT_DEPTH) {
                 fprintf(stderr, DAS_DIAG("das: rept deep\n",
                     "das: repetition nesting too deep\n"));
-                return -1;
+                goto fail;
             }
             nested++;
         }
         if (rept_store_append_line(c, line) != 0) {
             fprintf(stderr, DAS_DIAG("das: rept scratch\n",
                 "das: cannot retain bounded .rept body\n"));
-            return -1;
+            goto fail;
         }
     }
     *after = c->rept_spill.words;
     return 0;
+
+fail:
+    return -1;
 }
 
 static int capture_macro_body(struct asmctx *c,
@@ -8855,17 +8838,17 @@ static int capture_macro_body(struct asmctx *c,
 
     strcopy(tmp, definition, DAS_MAX_LINE);
     if (macro_parse_definition(c, tmp, name, sizeof(name), &argc) <= 0)
-        return -1;
+        goto fail;
     if (macro_internal_key(name, key, sizeof(key)) != 0 || find_sym(c, key, &old)) {
         fprintf(stderr, DAS_DIAG("das: duplicate macro\n",
             "das: duplicate macro definition: %s\n"), name);
-        return -1;
+        goto fail;
     }
     *def_pos = c->rept_spill.words;
     if (rept_store_append_line(c, definition) != 0) {
         fprintf(stderr, DAS_DIAG("das: macro scratch\n",
             "das: cannot retain bounded macro definition\n"));
-        return -1;
+        goto fail;
     }
     for (;;) {
         int lr;
@@ -8875,34 +8858,34 @@ static int capture_macro_body(struct asmctx *c,
         if (lr == DAS_INPUT_EOF) {
             fprintf(stderr, DAS_DIAG("das: unterminated macro\n",
                 "das: unterminated .macro directive\n"));
-            return -1;
+            goto fail;
         }
         if (lr == DAS_INPUT_TOOLONG) {
             fprintf(stderr, DAS_DIAG("das: long line\n",
                 "das: source line too long in .macro body\n"));
-            return -1;
+            goto fail;
         }
         if (lr == DAS_INPUT_ERROR) {
             fprintf(stderr, DAS_DIAG("das: bad input\n",
                 "das: malformed input in .macro body\n"));
-            return -1;
+            goto fail;
         }
         strcopy(tmp, line, DAS_MAX_LINE);
         kind = macro_structure_kind(c, tmp);
         if (kind == 1) {
             fprintf(stderr, DAS_DIAG("das: nested macro def\n",
                 "das: nested .macro definitions are not supported\n"));
-            return -1;
+            goto fail;
         }
         if (kind == 2) {
             strcopy(tmp, line, DAS_MAX_LINE);
             if (macro_validate_endm(c, tmp) <= 0)
-                return -1;
+                goto fail;
         }
         if (rept_store_append_line(c, line) != 0) {
             fprintf(stderr, DAS_DIAG("das: macro scratch\n",
                 "das: cannot retain bounded macro body\n"));
-            return -1;
+            goto fail;
         }
         if (kind == 2)
             break;
@@ -8910,6 +8893,9 @@ static int capture_macro_body(struct asmctx *c,
     add_sym(c, key, DAS_SEC_ABS | DAS_SYM_KIND_EQU, (das_word_t)*def_pos);
     mark_symbol_visible(c, key);
     return 0;
+
+fail:
+    return -1;
 }
 
 static int discard_macro_body(struct asmctx *c,
@@ -8998,7 +8984,7 @@ static int macro_prepare_invocation(struct asmctx *c, char *line,
     int found;
 
     label[0] = 0;
-    if (macro_scan_head(line, &parsed) == 0 || parsed.stmt == 0)
+    if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
     /* Macro names cannot shadow dotted directives or real opcodes. */
     if (parsed.stmt[0] == '.' ||
@@ -9011,17 +8997,17 @@ static int macro_prepare_invocation(struct asmctx *c, char *line,
             scratch, &next) != 0 ||
         macro_parse_definition(c, scratch, label, labelsz,
             &expected) <= 0)
-        return -1;
+        goto fail;
     if (macro_arg_scan(parsed.rest, 0U, 0, 0, &count) != 0) {
         fprintf(stderr, DAS_DIAG("das: bad macro invocation\n",
             "das: malformed macro invocation arguments: %s\n"), parsed.stmt);
-        return -1;
+        goto fail;
     }
     if (count != expected) {
         fprintf(stderr, DAS_DIAG("das: macro arg count\n",
             "das: macro %s expects %u arguments, got %u\n"),
             label, expected, count);
-        return -1;
+        goto fail;
     }
     /* The definition-name scratch is not an invocation label. */
     label[0] = 0;
@@ -9029,18 +9015,21 @@ static int macro_prepare_invocation(struct asmctx *c, char *line,
     if (rept_store_append_line(c, parsed.rest) != 0) {
         fprintf(stderr, DAS_DIAG("das: macro scratch\n",
             "das: cannot retain macro invocation arguments\n"));
-        return -1;
+        goto fail;
     }
     *call_id = c->source_serial;
     if (parsed.label != 0) {
         n = parsed.label_len;
         if (n + 2U > labelsz)
-            return -1;
+            goto fail;
         memcpy(label, parsed.label, n);
         label[n] = ':';
         label[n + 1U] = 0;
     }
     return 1;
+
+fail:
+    return -1;
 }
 
 static int macro_materialize(struct asmctx *c, unsigned int def_pos,
@@ -9311,26 +9300,26 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
         int ir;
 
         if (rept_store_read_line(c, pos, after, line, &next) != 0)
-            return 1;
+            goto fail;
         pos = next;
         if (source_advance(c))
-            return 1;
+            goto fail;
         if (iter_frame != 0) {
             if (iter_substitute_line(c, iter_frame, line, tmp,
                     DAS_MAX_LINE, inc) != 0) {
                 fprintf(stderr, DAS_DIAG("das: iter expansion\n",
                     "das: iterator expansion line is malformed or too long\n"));
-                return 1;
+                goto fail;
             }
             strcopy(line, tmp, DAS_MAX_LINE);
         }
         strcopy(tmp, line, DAS_MAX_LINE);
         dot = sec_base(c, *sec) + c->loc[*sec];
         if (conditional_line(c, tmp, cond, dot, &handled))
-            return 1;
+            goto fail;
         if (handled) {
             if (pass1_ir_reset(c))
-                return 1;
+                goto fail;
             continue;
         }
         if (!cond_active(cond)) {
@@ -9338,10 +9327,10 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
             if (macro_structure_kind(c, tmp) != 0) {
                 fprintf(stderr, DAS_DIAG("das: macro in rept\n",
                     "das: .macro/.endm directives are not allowed inside .rept bodies\n"));
-                return 1;
+                goto fail;
             }
             if (pass1_ir_reset(c))
-                return 1;
+                goto fail;
             continue;
         }
         strcopy(tmp, line, DAS_MAX_LINE);
@@ -9349,15 +9338,15 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
         if (kind != 0) {
             fprintf(stderr, DAS_DIAG("das: macro in rept\n",
                 "das: .macro/.endm directives are not allowed inside .rept bodies\n"));
-            return 1;
+            goto fail;
         }
         strcopy(tmp, line, DAS_MAX_LINE);
         if (rept_count_line(c, tmp, dot, &count, &kind))
-            return 1;
+            goto fail;
         if (kind == DAS_REPT_END) {
             fprintf(stderr, DAS_DIAG("das: unmatched endr\n",
                 "das: unmatched .endr directive\n"));
-            return 1;
+            goto fail;
         }
         if (kind == DAS_REPT_BLOCK || kind == DAS_REPT_IRP ||
             kind == DAS_REPT_IRPC) {
@@ -9369,12 +9358,12 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
             if (rept_depth >= DAS_MAX_REPT_DEPTH) {
                 fprintf(stderr, DAS_DIAG("das: rept deep\n",
                     "das: repetition nesting too deep\n"));
-                return 1;
+                goto fail;
             }
             if (rept_find_end(c, pos, after, &end_line, &after_end) != 0) {
                 fprintf(stderr, DAS_DIAG("das: unterminated rept\n",
                     "das: unterminated nested repetition directive\n"));
-                return 1;
+                goto fail;
             }
             if (kind == DAS_REPT_BLOCK) {
                 unsigned int i;
@@ -9384,7 +9373,7 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
                             include_depth, input_format, cond,
                             rept_depth + 1U, macro_frame, macro_depth,
                             iter_frame))
-                        return 1;
+                        goto fail;
                 }
             } else {
                 strcopy(tmp, line, DAS_MAX_LINE);
@@ -9393,11 +9382,11 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
                         values_pos, pos, end_line, sec, include_depth,
                         input_format, cond, rept_depth + 1U, macro_frame,
                         macro_depth, iter_frame))
-                    return 1;
+                    goto fail;
             }
             pos = after_end;
             if (pass1_ir_reset(c))
-                return 1;
+                goto fail;
             continue;
         }
         {
@@ -9411,13 +9400,13 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
             mr = macro_prepare_invocation(c, tmp, inc, label, sizeof(label),
                 &nested_def, &nested_args, &nested_call);
             if (mr < 0)
-                return 1;
+                goto fail;
             if (mr > 0) {
                 if (pass1_macro_invoke(c, source_path, label, nested_def,
                         nested_args, nested_call, sec, include_depth,
                         input_format, cond, rept_depth, macro_frame,
                         macro_depth, iter_frame))
-                    return 1;
+                    goto fail;
                 continue;
             }
         }
@@ -9426,11 +9415,11 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
         if (ir < 0) {
             fprintf(stderr, DAS_DIAG("das: bad include\n",
                 "das: bad include directive in repeated body\n"));
-            return 1;
+            goto fail;
         }
         if (ir > 0) {
             if (pass1_ir_reset(c))
-                return 1;
+                goto fail;
 #ifdef DAS_NATIVE
             dirname_of(source_path, dir, dir_cap);
             join_path(dir, inc, path, path_cap);
@@ -9441,17 +9430,20 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
             if (pass1_file(c, path, sec, include_depth + 1,
                     input_format, cond, rept_depth, macro_frame, macro_depth,
                     iter_frame))
-                return 1;
+                goto fail;
         } else if (pass1_ir_line(c, line, sec)) {
-            return 1;
+            goto fail;
         }
     }
     if (cond->depth != cond_start_depth) {
         fprintf(stderr, DAS_DIAG("das: rept conditional\n",
             "das: conditional cannot cross a .rept boundary\n"));
-        return 1;
+        goto fail;
     }
     return 0;
+
+fail:
+    return 1;
 }
 
 static int pass1_file(struct asmctx *c, const char *infile, int *sec,
@@ -9556,17 +9548,14 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
             break;
         if (lr == DAS_INPUT_TOOLONG) {
             fprintf(stderr, DAS_DIAG("das: long line: %s\n", "das: source line too long in %s\n"), infile);
-            fclose(f);
-            return 1;
+            goto fail;
         }
         if (lr == DAS_INPUT_ERROR) {
             fprintf(stderr, DAS_DIAG("das: bad input: %s\n", "das: malformed input in %s\n"), infile);
-            fclose(f);
-            return 1;
+            goto fail;
         }
         if (source_advance(c)) {
-            fclose(f);
-            return 1;
+            goto fail;
         }
         if (iter_frame != 0) {
             if (iter_substitute_line(c, iter_frame, line, tmp,
@@ -9574,8 +9563,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                 fprintf(stderr, DAS_DIAG("das: iter expansion\n",
                     "das: iterator expansion line is malformed or too long in %s\n"),
                     infile);
-                fclose(f);
-                return 1;
+                goto fail;
             }
             strcopy(line, tmp, DAS_MAX_LINE);
         }
@@ -9586,13 +9574,11 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
             strcopy(tmp, line, DAS_MAX_LINE);
             dot = sec_base(c, *sec) + c->loc[*sec];
             if (conditional_line(c, tmp, cond, dot, &handled)) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
             if (handled) {
                 if (pass1_ir_reset(c)) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 continue;
             }
@@ -9603,12 +9589,10 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                 mkind = macro_structure_kind(c, tmp);
                 if (mkind == 1 && discard_macro_body(c, &reader, line, tmp
                         ) != 0) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 if (pass1_ir_reset(c)) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 continue;
             }
@@ -9621,8 +9605,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
             if (mkind == 2) {
                 fprintf(stderr, DAS_DIAG("das: unmatched endm\n",
                     "das: unmatched .endm directive in %s\n"), infile);
-                fclose(f);
-                return 1;
+                goto fail;
             }
             if (mkind == 1) {
                 unsigned int macro_pos;
@@ -9630,17 +9613,14 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                 if (macro_depth != 0U) {
                     fprintf(stderr, DAS_DIAG("das: nested macro def\n",
                         "das: macro definitions during macro expansion are not supported\n"));
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 if (capture_macro_body(c, &reader, line, line, tmp, &macro_pos
                         ) != 0) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 if (pass1_ir_reset(c)) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 continue;
             }
@@ -9653,14 +9633,12 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
             dot = sec_base(c, *sec) + c->loc[*sec];
             strcopy(tmp, line, DAS_MAX_LINE);
             if (rept_count_line(c, tmp, dot, &count, &kind)) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
             if (kind == DAS_REPT_END) {
                 fprintf(stderr, DAS_DIAG("das: unmatched endr\n",
                     "das: unmatched .endr directive in %s\n"), infile);
-                fclose(f);
-                return 1;
+                goto fail;
             }
             if (kind == DAS_REPT_BLOCK || kind == DAS_REPT_IRP ||
                 kind == DAS_REPT_IRPC) {
@@ -9672,8 +9650,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                 if (rept_depth >= DAS_MAX_REPT_DEPTH) {
                     fprintf(stderr, DAS_DIAG("das: rept deep\n",
                         "das: repetition nesting too deep in %s\n"), infile);
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 name_pos = 0U;
                 values_pos = 0U;
@@ -9683,19 +9660,16 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                         fprintf(stderr, DAS_DIAG("das: iter scratch\n",
                             "das: cannot retain iterator specification in %s\n"),
                             infile);
-                        fclose(f);
-                        return 1;
+                        goto fail;
                     }
                 }
                 if (capture_rept_body(c, &reader, line, tmp,
                         rept_depth + 1U, &body_first, &body_after
                         ) != 0) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 if (pass1_ir_reset(c)) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 if (kind == DAS_REPT_BLOCK) {
                     unsigned int i;
@@ -9705,8 +9679,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                                 sec, depth, input_format, cond,
                                 rept_depth + 1U, macro_frame, macro_depth,
                                 iter_frame)) {
-                            fclose(f);
-                            return 1;
+                            goto fail;
                         }
                     }
                 } else {
@@ -9714,8 +9687,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
                             body_first, body_after, sec, depth, input_format,
                             cond, rept_depth + 1U, macro_frame, macro_depth,
                             iter_frame)) {
-                        fclose(f);
-                        return 1;
+                        goto fail;
                     }
                 }
                 continue;
@@ -9732,16 +9704,14 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
             mr = macro_prepare_invocation(c, tmp, inc, label, sizeof(label),
                 &nested_def, &nested_args, &nested_call);
             if (mr < 0) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
             if (mr > 0) {
                 if (pass1_macro_invoke(c, infile, label, nested_def,
                         nested_args, nested_call, sec, depth, input_format,
                         cond, rept_depth, macro_frame, macro_depth,
                         iter_frame)) {
-                    fclose(f);
-                    return 1;
+                    goto fail;
                 }
                 continue;
             }
@@ -9750,42 +9720,40 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
         ir = parse_include_line(tmp, inc, DAS_MAX_LINE);
         if (ir < 0) {
             fprintf(stderr, DAS_DIAG("das: bad include: %s\n", "das: bad include directive in %s\n"), infile);
-            fclose(f);
-            return 1;
+            goto fail;
         }
         if (ir > 0) {
             if (pass1_ir_reset(c)) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
             dirname_of(infile, dir, dir_cap);
             join_path(dir, inc, path, path_cap);
             if (pass1_file(c, path, sec, depth + 1, input_format, cond,
                     rept_depth, macro_frame, macro_depth, iter_frame)) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
         } else {
             if (pass1_ir_line(c, line, sec)) {
-                fclose(f);
-                return 1;
+                goto fail;
             }
         }
     }
     if ((reader.cstate & DAS_CSTATE_COMMENT) != 0U) {
         fprintf(stderr, DAS_DIAG("das: bad comment\n",
             "das: unterminated /* comment in %s\n"), infile);
-        fclose(f);
-        return 1;
+        goto fail;
     }
     if (cond->depth != cond_start_depth) {
         fprintf(stderr, DAS_DIAG("das: unterminated if\n",
             "das: unterminated conditional in %s\n"), infile);
-        fclose(f);
-        return 1;
+        goto fail;
     }
     fclose(f);
     return 0;
+
+fail:
+    fclose(f);
+    return 1;
 }
 #endif
 

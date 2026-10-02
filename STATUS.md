@@ -44,21 +44,23 @@ Current measured images with the standard 02000-word process stack are:
 
 - public DAS driver, built by KCC: image 000745, BSS 000000, process 002745
   words;
-- DAS1, currently built by PDP-10 GCC: image 025467, BSS 002234, process
-  031723 words;
-- DAS2, currently built by PDP-10 GCC: image 021756, BSS 002544, process
-  026522 words.
+- DAS1, built by KCC: image 033714, BSS 002032, process 037746 words;
+- DAS2, built by KCC: image 030351, BSS 002342, process 034713 words.
 
 The resident phase-image acceptance budget is 034000 words, below the DAIMOS
-loader's 036000-word hard image ceiling.  The peephole/folding optimizer is a
-host-build facility and is compiled out of DAS_NATIVE together with its
-resident state and output-rewrite helpers.  Current KCC measurements are
-036715 words for DAS1 and 030643 words for DAS2; DAS2 therefore meets the
-strict target while DAS1 remains 0715 words above the loader ceiling.  The
-public driver uses KCC while both large phases deliberately retain PDP-10 GCC
-as a transitional build input until DAS1 also fits.
-This is a code-size limitation, not a separate resident ABI: all three images
-use the current DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
+loader's 036000-word hard image ceiling.  Both KCC-built phases now satisfy
+the stricter 034000 budget and remain below the 040000-word process ceiling
+including BSS and the standard stack reserve.  The former transitional
+PDP-10 GCC phase build is no longer used.  All three images use the current
+DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
+
+The resident shrink came from structural lifetime and representation changes
+rather than removing assembler language support: the peephole/folding
+optimizer remains host-only; phase 1 omits phase-2-only instruction decoding;
+duplicate conditional, repetition, and macro line recognizers use the
+canonical parser; identical error exits share cleanup tails; native byte
+memory and numeric helpers implement only the contracts DAS uses; and the
+spill-backed symbol index uses 128 resident hash heads.
 
 During native bring-up this oversized-KCC path also exposed a KCC loop
 strength-reduction bug: a derived pointer kept live across a general IF could
@@ -67,9 +69,17 @@ compiler now rejects that unsafe strength reduction while retaining the safe
 terminal IF/CONTINUE form.  The full target DAS assemble/verify/execute
 regression passes with the corrected compiler.
 
-DAS1 uses 256 resident symbol hash heads. Symbol capacity remains spill-backed;
-the smaller table saves 0400 resident words versus the previous 512-head table
-without removing assembler functionality. DAS2 keeps a separate 0100-word
+The final KCC-only transition exposed a second KCC correctness bug: object
+optimization could push a MOVN backward through unsigned division/remainder,
+incorrectly treating unsigned quotient/remainder as odd under negation.  DAS's
+packed opcode lookup then selected JUMPN (0326) instead of MOVEI (0201) for
+mnemonic index 319.  KCC now rejects that invalid P_UIDIV transformation; the
+minimized unsigned-remainder regression passes on PDP-6, KA10, KI10, and KS10,
+and the native DAS assemble/execute regression passes.
+
+DAS1 uses 128 resident symbol hash heads. Symbol capacity remains spill-backed;
+the smaller table is only a lookup accelerator and does not limit symbol
+capacity. DAS2 keeps a separate 0100-word
 DASIR2 line-decode buffer so source-record reads cannot overwrite pending
 optimized output words.
 
@@ -165,10 +175,9 @@ DAIMOS ABI and are covered by an end-to-end DAIMOS execution regression.
 
 Host-only POSIX support is explicitly selected with DAS_HOST while resident
 builds use DAS_NATIVE; selecting neither profile is a build error.  KCC builds
-the small public resident driver.  Until KCC can keep the large phases below
-the resident image budget, PDP-10 GCC compiles DAS1/DAS2 from the same
-DAS_NATIVE source and DLINK links them with the current DAIMOS CRT0/syscall
-veneers.  No DAS source is copied into the DAIMOS tree.
+the public driver and both private resident phases, and DLINK links them with
+the current DAIMOS CRT0/syscall veneers.  No DAS source is copied into the
+DAIMOS tree.
 
 DAS.SIXMD is the authoritative command manual and is a mandatory validated
 build input.
