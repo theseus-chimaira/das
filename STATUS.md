@@ -44,8 +44,8 @@ Current measured images with the standard 02000-word process stack are:
 
 - public DAS driver, built by KCC: image 000745, BSS 000000, process 002745
   words;
-- DAS1, built by KCC: image 033714, BSS 002032, process 037746 words;
-- DAS2, built by KCC: image 030351, BSS 002342, process 034713 words.
+- DAS1, built by KCC: image 033244, BSS 002032, process 037276 words;
+- DAS2, built by KCC: image 027501, BSS 002342, process 034043 words.
 
 The resident phase-image acceptance budget is 034000 words, below the DAIMOS
 loader's 036000-word hard image ceiling.  Both KCC-built phases now satisfy
@@ -60,7 +60,9 @@ optimizer remains host-only; phase 1 omits phase-2-only instruction decoding;
 duplicate conditional, repetition, and macro line recognizers use the
 canonical parser; identical error exits share cleanup tails; native byte
 memory and numeric helpers implement only the contracts DAS uses; and the
-spill-backed symbol index uses 128 resident hash heads.
+spill-backed symbol index uses 128 resident hash heads.  KCC also shares one
+fixed-frame return epilogue across early returns, eliminating repeated frame
+teardown sequences throughout both phases.
 
 During native bring-up this oversized-KCC path also exposed a KCC loop
 strength-reduction bug: a derived pointer kept live across a general IF could
