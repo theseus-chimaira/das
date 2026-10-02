@@ -38,16 +38,27 @@ DAS2 images. The driver runs the phases sequentially through the same versioned
 
 Current measured images with the standard 02000-word process stack are:
 
-- public DAS driver: image 000455, BSS 000000, process 002455 words;
-- DAS1 with the current KCC path: image 045673, BSS 002410, process 050303
+- public DAS driver, built by KCC: image 000741, BSS 000000, process 002741
   words;
-- DAS2 with the current KCC path: image 042514, BSS 002720, process 045434
-  words.
+- DAS1, currently built by PDP-10 GCC: image 033106, BSS 002412, process
+  037520 words;
+- DAS2, currently built by PDP-10 GCC: image 030601, BSS 002722, process
+  035523 words.
 
-These are the current KCC measurements, not targets.  They are larger than the
-older GCC phase images and therefore make DAS a useful early KCC code-size
-optimization workload.  The phase split still keeps only one large assembler
-phase resident at a time.
+The resident phase-image acceptance budget is 034000 words, below the DAIMOS
+loader's 036000-word hard image ceiling.  The same phase sources built by the
+current KCC measured about 045673 words for DAS1 and 042514 words for DAS2,
+which the loader cannot run.  The public driver therefore uses KCC while the
+two large phases deliberately retain PDP-10 GCC as a transitional build input.
+This is a code-size limitation, not a separate resident ABI: all three images
+use the current DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
+
+During native bring-up this oversized-KCC path also exposed a KCC loop
+strength-reduction bug: a derived pointer kept live across a general IF could
+be spilled on only one branch and restored at the common continuation.  The
+compiler now rejects that unsafe strength reduction while retaining the safe
+terminal IF/CONTINUE form.  The full target DAS assemble/verify/execute
+regression passes with the corrected compiler.
 
 DAS1 uses 256 resident symbol hash heads. Symbol capacity remains spill-backed;
 the smaller table saves 0400 resident words versus the previous 512-head table
@@ -143,11 +154,12 @@ numeric syntax instead.
 The public phase driver and private phase images build against the current
 DAIMOS ABI and are covered by an end-to-end DAIMOS execution regression.
 
-Native C compilation now uses KCC.  Host DAS assembles the generated source
-and DLINK produces the three DXR images.  The obsolete PDP-10 GCC and private
-native syscall/runtime objects are no longer part of the build.  Host-only
-POSIX support is explicitly selected with DAS_HOST while resident builds use
-DAS_NATIVE.
+Host-only POSIX support is explicitly selected with DAS_HOST while resident
+builds use DAS_NATIVE; selecting neither profile is a build error.  KCC builds
+the small public resident driver.  Until KCC can keep the large phases below
+the resident image budget, PDP-10 GCC compiles DAS1/DAS2 from the same
+DAS_NATIVE source and DLINK links them with the current DAIMOS CRT0/syscall
+veneers.  No DAS source is copied into the DAIMOS tree.
 
 DAS.SIXMD is the authoritative command manual and is a mandatory validated
 build input.

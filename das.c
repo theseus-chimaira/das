@@ -2,7 +2,7 @@
 #error DAS_HOST and DAS_NATIVE are mutually exclusive
 #endif
 #if !defined(DAS_HOST) && !defined(DAS_NATIVE)
-#define DAS_HOST 1
+#error define exactly one of DAS_HOST or DAS_NATIVE
 #endif
 
 #ifdef DAS_HOST

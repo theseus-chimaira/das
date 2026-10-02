@@ -31,17 +31,19 @@ Installation uses "PDP10_PREFIX" when it is set, otherwise "PREFIX":
 MAKE INSTALL PDP10_PREFIX=/PATH/TO/PDP10-PREFIX
 """
 
-The DAIMOS-resident public driver and private DAS1/DAS2 images are built with
-the current DAIMOS KCC/DAS/DLINK toolchain:
+The DAIMOS-resident public driver and private DAS1/DAS2 images are built from
+this repository and consumed externally by the DAIMOS boot build:
 
 """SH
 MAKE NATIVE PDP10_PREFIX=/PATH/TO/PDP10-PREFIX DAIMOS_REPO=/PATH/TO/DAIMOS
 """
 
 Host-only POSIX support is selected with "DAS_HOST"; DAIMOS-resident builds
-select "DAS_NATIVE".  The modes are mutually exclusive.  Native builds use
-the current DAIMOS CRT0 and syscall veneers rather than private GCC runtime
-objects.
+select "DAS_NATIVE".  The modes are mutually exclusive and one must be chosen.
+The small resident driver is compiled by KCC.  DAS1/DAS2 currently use the
+PDP-10 GCC backend because current KCC output exceeds DAIMOS's resident image
+limit; all resident images nevertheless use the current DAIMOS CRT0/syscall
+ABI and are linked by DLINK.  See "STATUS.md" for measured phase sizes.
 
 "DAS.SIXMD" is the authoritative command manual.  Host and native builds both
 validate it with "sixmd-check" before producing assembler binaries.
