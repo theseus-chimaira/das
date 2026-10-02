@@ -41,9 +41,10 @@ MAKE NATIVE PDP10_PREFIX=/PATH/TO/PDP10-PREFIX DAIMOS_REPO=/PATH/TO/DAIMOS
 Host-only POSIX support is selected with "DAS_HOST"; DAIMOS-resident builds
 select "DAS_NATIVE".  The modes are mutually exclusive and one must be chosen.
 The small resident driver is compiled by KCC.  DAS1/DAS2 currently use the
-PDP-10 GCC backend because current KCC output exceeds DAIMOS's resident image
-limit; all resident images nevertheless use the current DAIMOS CRT0/syscall
-ABI and are linked by DLINK.  See "STATUS.md" for measured phase sizes.
+PDP-10 GCC backend because KCC DAS1 still exceeds DAIMOS's resident image
+limit; KCC DAS2 is already below the stricter resident target.  All resident
+images nevertheless use the current DAIMOS CRT0/syscall ABI and are linked by
+DLINK.  See "STATUS.md" for measured phase sizes.
 
 The native installation keeps only the public command on the normal optional
 software PATH:
@@ -77,15 +78,17 @@ Important options:
 - "-K" enables the corresponding kernel/I/O instruction mode.
 - "-A" selects ordinary ASCII source input.
 - "-S" selects S6REC source input.
-- "-F" enables the peephole/folding optimizer.
+- "-F" enables the peephole/folding optimizer in host builds.  Resident DAS
+  accepts it for command-line compatibility but does not compile the optimizer.
 - "-P" uses a pipe between the two DXR phases instead of a phase file.
 - "-M" prints assembler memory/work statistics.
 - "-L FILE" writes the label map.
 - "-O FILE" selects the output file.
 
 DAS uses uppercase short options only. "-O FILE" always selects the output
-file and "-F" always enables optimization. DAIMOS filesystem text is S6REC, so
-"-S" is the normal source form when DAS runs under DAIMOS.
+file.  Host DAS uses "-F" to enable optimization; resident DAS accepts "-F"
+as a compatibility no-op. DAIMOS filesystem text is S6REC, so "-S" is the
+normal source form when DAS runs under DAIMOS.
 
 DOBJ mode is linked by "DLINK" from "PDP10-TOOLS". "-C" and "-F" may be used
 together; optimized DOBJ output retains the required relocation records.

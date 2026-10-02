@@ -2,16 +2,15 @@
 
 ## 1. Bring KCC-built resident phases back under the image budget
 
-The resident DAS architecture is working and the public driver is KCC-built,
-but current KCC output for DAS1/DAS2 exceeds the 036000-word loader ceiling.
-The accepted transitional build compiles those two phases with PDP-10 GCC and
-keeps them below the stricter 034000-word regression budget.
+The resident DAS architecture is working and the public driver is KCC-built.
+After making the peephole/folding optimizer host-only, KCC DAS2 is 030643 and
+already meets the 034000-word target.  KCC DAS1 is 036715, only 0715 words
+above the 036000-word loader ceiling.  The accepted transitional build still
+compiles both phases with PDP-10 GCC and keeps them below the stricter budget.
 
-Optimize KCC code generation and/or the phase compilation surface until both
-DAS1 and DAS2 meet 034000 words when KCC-built.  Phase-live preprocessing has
-already reduced the KCC measurements to 045630/041346 without changing
-functionality; continue measuring each structural change independently.  Do
-not raise the loader limit or merge the phases to hide this requirement.
+Continue shrinking KCC DAS1 first until it crosses the loader ceiling and then
+the 034000-word target.  DAS2 already meets the target.  Do not raise the
+loader limit or merge the phases to hide this requirement.
 
 ## 2. Extend DAIMOS-resident regression coverage
 

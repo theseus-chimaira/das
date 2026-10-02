@@ -23,10 +23,11 @@ NATIVE_DAS ?= ./das
 NATIVE_KCCFLAGS ?= -Pgnu99 -O -x=pdp6 -m=gas
 NATIVE_GCCFLAGS ?= -std=c99 -Os -fno-builtin -march=166 -mtune=166
 
-# The public resident driver is small enough for current KCC.  DAS1/DAS2 are
-# still built with the PDP-10 GCC backend because current KCC expands the same
-# sources beyond DAIMOS's 036000-word executable-image ceiling.  Keep this
-# split explicit until KCC meets the 034000-word per-phase test budget.
+# The public resident driver is small enough for current KCC.  Resident DAS
+# does not compile the host peephole optimizer; KCC DAS2 therefore fits the
+# 034000-word target, while DAS1 remains slightly above the 036000-word loader
+# ceiling.  Keep both large phases on PDP-10 GCC until DAS1 also fits, then
+# switch the pair together so the resident phase toolchain stays uniform.
 SIXMD_CHECK ?= ${PDP10_PREFIX}/bin/sixmd-check
 MANUAL = DAS.SIXMD
 MANUALDIR ?= ${PDP10_PREFIX}/share/daimos/manual

@@ -7,6 +7,9 @@
 
 #ifdef DAS_HOST
 #define _POSIX_C_SOURCE 200809L
+#define DAS_ENABLE_OPTIMIZER 1
+#else
+#define DAS_ENABLE_OPTIMIZER 0
 #endif
 /* das - DAIMOS DXR V1 assembler, first cut. */
 #ifdef DAS_NATIVE
@@ -652,6 +655,7 @@ static const das_word_t das_op_mn[DAS_OP_COUNT] = {
     DAS_OP6('S','K','I','P','L','E'),
     DAS_OP6('X','M','O','V','E','I')
 };
+#if !defined(DAS_NATIVE_PHASE1_ONLY)
 static const das_word_t das_op_info[] = {
     DAS_W(001341010340),
     DAS_W(001640500251),
@@ -784,7 +788,48 @@ static const das_word_t das_op_info[] = {
     DAS_W(002315142462),
     DAS_W(001564667201)
 };
+#elif DAS_ENABLE_OPTIMIZER
+/* Pass 1 needs exact skip classification, but not the complete opcode
+ * encoding table.  One bit per sorted mnemonic preserves optimizer semantics
+ * while avoiding phase-2-only encoding metadata in the resident image. */
+static const das_word_t das_op_skip_bits[] = {
+    DAS_W(000000000000),
+    DAS_W(001703640003),
+    DAS_W(737760000000),
+    DAS_W(000000000000),
+    DAS_W(000000000001),
+    DAS_W(743777777777),
+    DAS_W(777777400037),
+    DAS_W(400000000000),
+    DAS_W(000000000000),
+    DAS_W(000000000037),
+    DAS_W(140000000600)
+};
+#endif
 static das_word_t das_mask36(das_word_t x) { return x & DAS_WORD_MASK; }
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+static int lookup_op_mn(das_word_t m, int *nonbase)
+{
+    unsigned int lo;
+    unsigned int hi;
+    unsigned int mid;
+
+    lo = 0U;
+    hi = DAS_OP_COUNT;
+    if (nonbase != 0)
+        *nonbase = 0;
+    while (lo < hi) {
+        mid = lo + (hi - lo) / 2U;
+        if (m < das_op_mn[mid])
+            hi = mid;
+        else if (m > das_op_mn[mid])
+            lo = mid + 1U;
+        else
+            return 0;
+    }
+    return -1;
+}
+#else
 static int lookup_op_mn(das_word_t m, int *nonbase)
 {
     unsigned int lo;
@@ -814,11 +859,14 @@ static int lookup_op_mn(das_word_t m, int *nonbase)
         *nonbase = 0;
     return -1;
 }
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static das_word_t das_enc_mem(unsigned int op, unsigned int ac, int ind, int xr, unsigned int y) { return das_mask36(((das_word_t)op << 27) | ((das_word_t)(ac & 017) << 23) | ((das_word_t)(ind & 1) << 22) | ((das_word_t)(xr & 017) << 18) | (y & DAS_HALF_MASK)); }
 static void das_bitmap_set(das_word_t *map, unsigned int off) { map[off / 36U] |= (DAS_W(1) << (35U - (off % 36U))); }
+#if DAS_ENABLE_OPTIMIZER
 static void das_bitmap_clear(das_word_t *map, unsigned int off) { map[off / 36U] &= ~(DAS_W(1) << (35U - (off % 36U))); }
 static int das_bitmap_get(das_word_t *map, unsigned int off) { return (map[off / 36U] & (DAS_W(1) << (35U - (off % 36U)))) != 0; }
+#endif
 #endif
 
 #if defined(DAS_NATIVE_SELFTEST)
@@ -1094,6 +1142,7 @@ struct asmctx {
     unsigned int peak_work_words;
     unsigned int parser_classifications;
     unsigned int parser_token_probes;
+#if DAS_ENABLE_OPTIMIZER
     unsigned int opt_window_len;
     unsigned int opt_value[16];
     unsigned int opt_prev_move;
@@ -1125,6 +1174,7 @@ struct asmctx {
     unsigned int opt_prev_lshr_count;
     unsigned int opt_skip_next;
     unsigned int opt_current_may_be_skipped;
+#endif
     char entry_name[DAS_MAX_NAME + 1];
 #ifndef DAS_NATIVE
     int object_mode;
@@ -1185,7 +1235,9 @@ struct host_word_input {
 };
 
 static unsigned int sec_base(struct asmctx *c, int sec);
+#if DAS_ENABLE_OPTIMIZER
 static int das_optimize;
+#endif
 #if !defined(DAS_NATIVE) && !defined(DAS_PHASE2_PROGRAM)
 static int das_object_mode;
 #endif
@@ -2108,6 +2160,7 @@ static void add_sym(struct asmctx *c, const char *name, int sec,
 
 /* Indexed XCT can enter any word in its target table.  Keep a distinct
  * spill-backed marker namespace so this information costs no fixed RAM. */
+#if DAS_ENABLE_OPTIMIZER
 static das_word_t indexed_xct_hash(const char *name)
 {
     return das_mask36(sym_hash(name) ^ DAS_W(0252525252525));
@@ -2165,6 +2218,7 @@ static void mark_indexed_xct_target(struct asmctx *c, const char *name)
     store->heads[bucket] = ref;
     store->records = ref;
 }
+#endif
 #endif
 
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
@@ -2909,6 +2963,7 @@ static __inline__ int parse_expr_integer(char **pp, das_word_t *value)
 
 static int opt_octal_ac(const char **pp, unsigned int *ac);
 
+#if DAS_ENABLE_OPTIMIZER
 static int opt_move_literal_immediate(struct das_parsed_line *parsed,
                                       unsigned int *ac, unsigned int *value)
 {
@@ -2936,6 +2991,7 @@ static int opt_move_literal_immediate(struct das_parsed_line *parsed,
     *value = (unsigned int)v;
     return 1;
 }
+#endif
 
 struct expr_state {
     struct asmctx *c;
@@ -4272,6 +4328,7 @@ static int conditional_line(struct asmctx *c, char *line,
 }
 #endif
 
+#if DAS_ENABLE_OPTIMIZER
 static void opt_reset(struct asmctx *c)
 {
     unsigned int i;
@@ -4290,6 +4347,7 @@ static void opt_reset(struct asmctx *c)
     for (i = 0U; i < 16U; i++)
         c->opt_value[i] = i;
 }
+#endif
 
 static int opt_octal_ac(const char **pp, unsigned int *ac)
 {
@@ -4318,6 +4376,7 @@ static int opt_octal_ac(const char **pp, unsigned int *ac)
     return 1;
 }
 
+#if DAS_ENABLE_OPTIMIZER
 static int opt_reg_pair(struct das_parsed_line *parsed, das_word_t *mn,
                         unsigned int *dst, unsigned int *src)
 {
@@ -4730,12 +4789,20 @@ static int opt_label_is_indexed_xct_target(struct asmctx *c,
 
 static int opt_instruction_may_skip(struct das_parsed_line *parsed)
 {
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+    int index;
+#else
     int op;
+#endif
 
     if (!das_optimize || parsed->token != DAS_TOK_OTHER)
         return 0;
     if (parsed->mnemonic == DAS_OP3('X','C','T'))
         return 1;
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+    index = lookup_op_index(parsed->mnemonic);
+    return op_index_may_skip(index);
+#else
     op = lookup_op_mn(parsed->mnemonic, 0);
     if (op < 0)
         return 0;
@@ -4748,6 +4815,7 @@ static int opt_instruction_may_skip(struct das_parsed_line *parsed)
     if (op >= 0600 && op <= 0677 && (op & 07) != 0)
         return 1;
     return 0;
+#endif
 }
 
 static void opt_begin_line(struct asmctx *c,
@@ -5320,6 +5388,9 @@ static int opt_drop_line(struct asmctx *c, struct das_parsed_line *parsed)
     c->opt_window_len++;
     return 0;
 }
+#else
+#define opt_reset(c) ((void)(c))
+#endif
 
 static int assignment_args(char *rest, char *name, size_t namesz,
                            char **expr)
@@ -5522,6 +5593,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
 
     if (parse_line_head(c, line, &parsed) == 0)
         return 0;
+#if DAS_ENABLE_OPTIMIZER
     if (opt_indexed_xct_symbol(&parsed, name, sizeof(name)))
         mark_indexed_xct_target(c, "");
     if (opt_jump_jrst_next_label(c, &parsed)) {
@@ -5550,6 +5622,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         c->loc[*sec]++;
         return 0;
     }
+#endif
     if (parsed.label != 0) {
         n = parsed.label_len;
         if (n > DAS_MAX_NAME)
@@ -5567,6 +5640,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         mark_symbol_visible(c, name);
         add_sym(c, name, *sec, c->loc[*sec]);
     }
+#if DAS_ENABLE_OPTIMIZER
     if (opt_finish_pending_push(c, &parsed)) {
         opt_reset(c);
         opt_record_prev(c, &parsed);
@@ -5677,6 +5751,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
     }
     if (opt_drop_line(c, &parsed))
         return 0;
+#endif
     if (parsed.stmt == 0)
         return 0;
     switch (parsed.token) {
@@ -5773,11 +5848,15 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         break;
     }
     {
+#if DAS_ENABLE_OPTIMIZER
         unsigned int opt_ac;
         unsigned int opt_value;
 
         if (!opt_move_literal_immediate(&parsed, &opt_ac, &opt_value))
             scan_literals(c, parsed.stmt);
+#else
+        scan_literals(c, parsed.stmt);
+#endif
     }
     nwords = parsed_word_count(c, &parsed,
         sec_base(c, *sec) + c->loc[*sec]);
@@ -5786,7 +5865,9 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         return 1;
     }
     c->loc[*sec] += (unsigned int)nwords;
+#if DAS_ENABLE_OPTIMIZER
     opt_record_prev(c, &parsed);
+#endif
     return 0;
 }
 #endif
@@ -6204,6 +6285,7 @@ static int output_object_relocate_word(struct das_output *out,
 }
 #endif
 
+#if DAS_ENABLE_OPTIMIZER
 #ifdef DAS_NATIVE
 /* Keep the native optimizer on the existing bitmap operations with no new
  * resident helper code or state.  DOBJ exists only in the host build. */
@@ -6228,6 +6310,7 @@ static int output_reloc_same(struct das_output *out,
     return das_bitmap_get(out->relmap, aoff) ==
         das_bitmap_get(out->relmap, boff);
 }
+#endif
 #endif
 
 static int output_emit(struct das_output *out, unsigned int off,
@@ -6258,6 +6341,7 @@ static int output_emit(struct das_output *out, unsigned int off,
     return 0;
 }
 
+#if DAS_ENABLE_OPTIMIZER
 static int output_read_word(struct das_output *out, unsigned int off,
                             das_word_t *word)
 {
@@ -6380,6 +6464,7 @@ static int output_reopcode(struct das_output *out, unsigned int off,
 #endif
     return 0;
 }
+#endif
 
 static int output_emit_zeros(struct das_output *out, unsigned int off,
                              unsigned int count)
@@ -6920,6 +7005,7 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
     dot = sec_base(c, sec) + off;
     if (sec == DAS_SEC_BSS)
         return 0;
+#if DAS_ENABLE_OPTIMIZER
     {
         unsigned int opt_ac;
         unsigned int opt_value;
@@ -6928,6 +7014,7 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
             return output_emit(out, dot,
                 das_enc_mem(0201U, opt_ac, 0, 0, opt_value), 0);
     }
+#endif
     switch (parsed->token) {
     case DAS_TOK_RADIX:
         fprintf(stderr, DAS_DIAG("das: RADIX unsupported\n", "das: RADIX is not supported; DXR assembly uses octal constants by default\n"));
@@ -7578,6 +7665,7 @@ static int ir_store_begin(struct asmctx *c)
 }
 #endif
 
+#if DAS_ENABLE_OPTIMIZER
 static int ir_store_control(struct asmctx *c, unsigned int type)
 {
     das_word_t header;
@@ -7585,6 +7673,7 @@ static int ir_store_control(struct asmctx *c, unsigned int type)
     header = ((das_word_t)(type & DAS_IR_TYPE_MASK)) << DAS_IR_TYPE_SHIFT;
     return wordfile_append(&c->ir_spill, &header, 1U);
 }
+#endif
 
 static int ir_store_append_line(struct asmctx *c, const char *line)
 {
@@ -7618,6 +7707,7 @@ static int ir_store_append_line(struct asmctx *c, const char *line)
 }
 
 #if !defined(DAS_PHASE2_PROGRAM)
+#if DAS_ENABLE_OPTIMIZER
 static int ir_store_read_line(struct asmctx *c, unsigned int *pos,
                               char *line, unsigned int *type)
 {
@@ -7661,9 +7751,11 @@ static int ir_store_read_line(struct asmctx *c, unsigned int *pos,
     return 0;
 }
 #endif
+#endif
 
 
-#if !defined(DAS_PHASE2_PROGRAM) && !defined(DAS_NATIVE_PHASE2_ONLY)
+#if !defined(DAS_PHASE2_PROGRAM) && !defined(DAS_NATIVE_PHASE2_ONLY) && \
+    DAS_ENABLE_OPTIMIZER
 static int ir_indexed_xct_targets(struct asmctx *c, int mark)
 {
 #ifdef DAS_NATIVE
@@ -7728,8 +7820,10 @@ static void pass1_reset_semantics_for_ir_replay(struct asmctx *c)
     c->entry_name[0] = 0;
     c->source_serial = 0U;
     c->set_serial = 0U;
+#if DAS_ENABLE_OPTIMIZER
     c->opt_skip_next = 0U;
     c->opt_current_may_be_skipped = 0U;
+#endif
     opt_reset(c);
 #ifndef DAS_NATIVE
     c->obj_global_count = 0U;
@@ -7764,7 +7858,9 @@ static int pass1_replay_ir(struct asmctx *c)
             continue;
         }
         if (type == DAS_IR_GUARD) {
+#if DAS_ENABLE_OPTIMIZER
             c->opt_skip_next |= DAS_OPT_GUARD_NEXT;
+#endif
             continue;
         }
         if (type != DAS_IR_LINE)
@@ -7848,8 +7944,10 @@ static int phase_export_stream(struct asmctx *c, FILE *out)
     int rc;
 
     flags = 0U;
+#if DAS_ENABLE_OPTIMIZER
     if (das_optimize)
         flags |= DAS_PHASE_F_OPTIMIZE;
+#endif
     if (das_strict_base)
         flags |= DAS_PHASE_F_STRICT_BASE;
     if (das_kernel_mode)
@@ -7955,7 +8053,9 @@ static int phase_import_state(struct asmctx *c, struct host_word_input *in,
             return -1;
     }
     flags = (unsigned int)state[0];
+#if DAS_ENABLE_OPTIMIZER
     das_optimize = (flags & DAS_PHASE_F_OPTIMIZE) != 0U;
+#endif
     das_strict_base = (flags & DAS_PHASE_F_STRICT_BASE) != 0U;
     das_kernel_mode = (flags & DAS_PHASE_F_KERNEL) != 0U;
     c->entry = (unsigned int)state[1];
@@ -9082,23 +9182,31 @@ static int pass1_ir_line(struct asmctx *c, char *line, int *sec)
 
 static int pass1_ir_reset(struct asmctx *c)
 {
+#if DAS_ENABLE_OPTIMIZER
     opt_reset(c);
     if (ir_store_control(c, DAS_IR_RESET) != 0) {
         fprintf(stderr, DAS_DIAG("das: ir scratch\n",
             "das: cannot retain optimizer phase barrier\n"));
         return 1;
     }
+#else
+    (void)c;
+#endif
     return 0;
 }
 
 static int pass1_ir_guard(struct asmctx *c)
 {
+#if DAS_ENABLE_OPTIMIZER
     c->opt_skip_next |= DAS_OPT_GUARD_NEXT;
     if (ir_store_control(c, DAS_IR_GUARD) != 0) {
         fprintf(stderr, DAS_DIAG("das: ir scratch\n",
             "das: cannot retain labeled-entry phase barrier\n"));
         return 1;
     }
+#else
+    (void)c;
+#endif
     return 0;
 }
 
@@ -9381,10 +9489,12 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
     int lr;
     unsigned int cond_start_depth;
     cond_start_depth = cond->depth;
+#if DAS_ENABLE_OPTIMIZER
     if (depth == 0) {
         c->opt_skip_next = 0U;
         c->opt_current_may_be_skipped = 0U;
     }
+#endif
     if (depth > (int)DAS_MAX_INCLUDE_DEPTH) {
         fprintf(stderr, DAS_DIAG("das: include deep\n", "das: include nesting too deep\n"));
         return 1;
@@ -9680,6 +9790,7 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
 #endif
 
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
+#if DAS_ENABLE_OPTIMIZER
 static int opt_store_forward_emitted(struct asmctx *c,
                                      struct das_parsed_line *parsed,
                                      struct das_output *out,
@@ -9811,6 +9922,10 @@ static int pass2_emit_pending_jrst(struct asmctx *c, int *sec,
     opt_reset(c);
     return 0;
 }
+#else
+#define pass2_emit_pending_jump_jrst(c, sec, loc, out) (0)
+#define pass2_emit_pending_jrst(c, sec, loc, out) (0)
+#endif
 
 static int pass2_line(struct asmctx *c, char *line, int *sec,
                       unsigned int loc[4], struct das_output *out)
@@ -9821,6 +9936,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
 
     if (parse_line_head(c, line, &parsed) == 0)
         return 0;
+#if DAS_ENABLE_OPTIMIZER
     if (opt_jump_jrst_next_label(c, &parsed)) {
         if (pass2_fold_jump_jrst(c, sec, loc, out) != 0)
             return 1;
@@ -10091,6 +10207,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
     }
     if (opt_drop_line(c, &parsed))
         return 0;
+#endif
     if (parsed.stmt == 0)
         return 0;
     switch (parsed.token) {
@@ -10124,7 +10241,9 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
             output_emit_zeros(out, dot, padding) != 0)
             return 1;
         loc[*sec] += padding;
+#if DAS_ENABLE_OPTIMIZER
         opt_reset(c);
+#endif
         return 0;
     }
     case DAS_TOK_ORG: {
@@ -10142,7 +10261,9 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
             output_emit_zeros(out, dot, padding) != 0)
             return 1;
         loc[*sec] = target;
+#if DAS_ENABLE_OPTIMIZER
         opt_reset(c);
+#endif
         return 0;
     }
     case DAS_TOK_NO_WORDS:
@@ -10173,10 +10294,13 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
         return 1;
     }
     off = loc[*sec];
+#if DAS_ENABLE_OPTIMIZER
     opt_record_prev(c, &parsed);
+#endif
     if (pass2_stmt(c, *sec, off, &parsed,
             (unsigned int)nwords, out) != 0)
         return 1;
+#if DAS_ENABLE_OPTIMIZER
     if (nwords == 1) {
         int forwarded;
 
@@ -10186,6 +10310,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
             return 1;
     }
     opt_record_store_word(c, &parsed, out, sec_base(c, *sec) + off);
+#endif
     loc[*sec] += (unsigned int)nwords;
     return 0;
 }
@@ -10234,7 +10359,9 @@ static int pass2_ir(struct asmctx *c, int *sec, unsigned int loc[4],
             continue;
         }
         if (type == DAS_IR_GUARD) {
+#if DAS_ENABLE_OPTIMIZER
             c->opt_skip_next |= DAS_OPT_GUARD_NEXT;
+#endif
             continue;
         }
         if (type != DAS_IR_LINE) {
@@ -10334,7 +10461,9 @@ static int pass2_phase_stream(struct asmctx *c, struct host_word_input *in,
             continue;
         }
         if (type == DAS_IR_GUARD) {
+#if DAS_ENABLE_OPTIMIZER
             c->opt_skip_next |= DAS_OPT_GUARD_NEXT;
+#endif
             continue;
         }
         if (type != DAS_IR_LINE) {
@@ -10389,8 +10518,10 @@ static int assemble_phase1_stream(const char *infile, const char *outfile,
     opt_reset(c);
     rc = pass1_file(c, infile, &sec, 0, input_format, &cond,
         0U, 0, 0U, 0);
+#if DAS_ENABLE_OPTIMIZER
     if (rc == 0)
         rc = pass1_replay_indexed_xct(c);
+#endif
     if (rc != 0) {
         store_close(c);
         return 1;
@@ -10673,8 +10804,11 @@ static int assemble_file(const char *infile, const char *outfile,
     sec = DAS_SEC_TEXT;
     memset(&cond, 0, sizeof(cond));
     opt_reset(c);
-    if (pass1_file(c, infile, &sec, 0, input_format, &cond, 0U, 0, 0U, 0) ||
-        pass1_replay_indexed_xct(c)) {
+    if (pass1_file(c, infile, &sec, 0, input_format, &cond, 0U, 0, 0U, 0)
+#if DAS_ENABLE_OPTIMIZER
+        || pass1_replay_indexed_xct(c)
+#endif
+        ) {
         store_close(c);
         return 1;
     }
@@ -11193,7 +11327,9 @@ int das_native_main(int argc, kword_t **argv)
             das_strict_base = 1;
             das_kernel_mode = 1;
         } else if (strcmp(argtext, "-F") == 0) {
+#if DAS_ENABLE_OPTIMIZER
             das_optimize = 1;
+#endif
         } else if (strcmp(argtext, "-S") == 0) {
             /* Native DAS input is always S6REC. */
 #endif

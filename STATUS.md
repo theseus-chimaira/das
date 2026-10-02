@@ -42,19 +42,21 @@ are invoked by absolute path; they never occupy the command-search namespace.
 
 Current measured images with the standard 02000-word process stack are:
 
-- public DAS driver, built by KCC: image 000741, BSS 000000, process 002741
+- public DAS driver, built by KCC: image 000745, BSS 000000, process 002745
   words;
-- DAS1, currently built by PDP-10 GCC: image 033106, BSS 002412, process
-  037520 words;
-- DAS2, currently built by PDP-10 GCC: image 030601, BSS 002722, process
-  035523 words.
+- DAS1, currently built by PDP-10 GCC: image 025467, BSS 002234, process
+  031723 words;
+- DAS2, currently built by PDP-10 GCC: image 021756, BSS 002544, process
+  026522 words.
 
 The resident phase-image acceptance budget is 034000 words, below the DAIMOS
-loader's 036000-word hard image ceiling.  After removing code whose lifetime
-belongs exclusively to the other native phase, current KCC measures 045630
-words for DAS1 and 041346 words for DAS2.  Those images still exceed the
-loader limit, so the public driver uses KCC while the two large phases
-deliberately retain PDP-10 GCC as a transitional build input.
+loader's 036000-word hard image ceiling.  The peephole/folding optimizer is a
+host-build facility and is compiled out of DAS_NATIVE together with its
+resident state and output-rewrite helpers.  Current KCC measurements are
+036715 words for DAS1 and 030643 words for DAS2; DAS2 therefore meets the
+strict target while DAS1 remains 0715 words above the loader ceiling.  The
+public driver uses KCC while both large phases deliberately retain PDP-10 GCC
+as a transitional build input until DAS1 also fits.
 This is a code-size limitation, not a separate resident ABI: all three images
 use the current DAIMOS CRT0/syscall interface and the DAS_NATIVE source path.
 
@@ -83,7 +85,7 @@ DXR is the default directly loadable output.
 global definitions, unresolved global imports, and RH18/LH18 relocation forms.
 DOBJ objects are consumed by "DLINK".
 
-DOBJ supports "-F" optimization.  Optimizer word rewrites share the normal optimizer path
+DOBJ supports host-build "-F" optimization.  Optimizer word rewrites share the normal optimizer path
 and update DOBJ relocation records when an operand relocation is replaced or
 removed.  Rewrites that only change opcode or accumulator fields preserve the
 existing object relocation.  DOBJ still rejects "-P" because it is not
@@ -132,7 +134,9 @@ shadow an outer iterator name; the outer value resumes after the inner ".ENDR".
 
 ## Optimizer
 
-"-F" enables the bounded peephole/folding optimizer for DXR and DOBJ output.  "-O FILE" selects the output path.
+Host-build "-F" enables the bounded peephole/folding optimizer for DXR and
+DOBJ output.  Resident DAS accepts "-F" for interface compatibility but does
+not include the optimizer.  "-O FILE" selects the output path.
 The optimizer includes local value/move/halfword folds, relocation-aware store
 forwarding, JRST-to-next-label removal, and conditional jump/JRST inversion:
 
