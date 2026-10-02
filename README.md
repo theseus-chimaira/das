@@ -45,6 +45,17 @@ PDP-10 GCC backend because current KCC output exceeds DAIMOS's resident image
 limit; all resident images nevertheless use the current DAIMOS CRT0/syscall
 ABI and are linked by DLINK.  See "STATUS.md" for measured phase sizes.
 
+The native installation keeps only the public command on the normal optional
+software PATH:
+
+"/OPTION/BASE/EXEC/DAS"
+
+The private resident phases are implementation details and live outside the
+command namespace:
+
+"/OPTION/BASE/LIBEXEC/DAS/DAS1"
+"/OPTION/BASE/LIBEXEC/DAS/DAS2"
+
 "DAS.SIXMD" is the authoritative command manual.  Host and native builds both
 validate it with "sixmd-check" before producing assembler binaries.
 

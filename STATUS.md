@@ -36,6 +36,10 @@ The DAIMOS-resident command uses a small public driver plus private DAS1 and
 DAS2 images. The driver runs the phases sequentially through the same versioned
 "DASIR2" file format used by the development two-process path.
 
+The public command is installed as "/OPTION/BASE/EXEC/DAS".  DAS1 and DAS2
+are private implementation executables under "/OPTION/BASE/LIBEXEC/DAS" and
+are invoked by absolute path; they never occupy the command-search namespace.
+
 Current measured images with the standard 02000-word process stack are:
 
 - public DAS driver, built by KCC: image 000741, BSS 000000, process 002741

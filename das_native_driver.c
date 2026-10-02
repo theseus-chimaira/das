@@ -7,16 +7,20 @@
      SYS_RUN_ARG_MAX * DAS_DRIVER_RECORD_WORDS + 1U)
 
 static kword_t das1_path[] = {
-    17UL,
-    PDP10_SIX6('/','S','Y','S','T','E'),
-    PDP10_SIX6('M','/','E','X','E','C'),
+    29UL,
+    PDP10_SIX6('/','O','P','T','I','O'),
+    PDP10_SIX6('N','/','B','A','S','E'),
+    PDP10_SIX6('/','L','I','B','E','X'),
+    PDP10_SIX6('E','C','/','D','A','S'),
     PDP10_SIX6('/','D','A','S','1',' ')
 };
 
 static kword_t das2_path[] = {
-    17UL,
-    PDP10_SIX6('/','S','Y','S','T','E'),
-    PDP10_SIX6('M','/','E','X','E','C'),
+    29UL,
+    PDP10_SIX6('/','O','P','T','I','O'),
+    PDP10_SIX6('N','/','B','A','S','E'),
+    PDP10_SIX6('/','L','I','B','E','X'),
+    PDP10_SIX6('E','C','/','D','A','S'),
     PDP10_SIX6('/','D','A','S','2',' ')
 };
 
