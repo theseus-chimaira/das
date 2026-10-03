@@ -68,7 +68,7 @@ The current phase images and their memory budgets are documented in
 The canonical public interface is:
 
 """TEXT
-das [-C] [-B OR -K] [-A OR -S] [-F] [-P] [-M] [-L OUT.LABELS] -O OUTPUT INPUT
+das [-C] [-B OR -K] [-A OR -S] [-F] [-M] [-L OUT.LABELS] -O OUTPUT INPUT
 """
 
 Important options:
@@ -80,7 +80,9 @@ Important options:
 - "-S" selects S6REC source input.
 - "-F" enables the peephole/folding optimizer in host builds.  Resident DAS
   accepts it for command-line compatibility but does not compile the optimizer.
-- "-P" uses a pipe between the two DXR phases instead of a phase file.
+- "-P" is implemented by the host assembler but is not implemented by the
+  DAIMOS-resident driver.  Resident DAS uses the private file-backed DASIR2
+  phase transport until a measured benefit justifies adding pipe transport.
 - "-M" prints assembler memory/work statistics.
 - "-L FILE" writes the label map.
 - "-O FILE" selects the output file.

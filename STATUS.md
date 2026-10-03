@@ -22,9 +22,10 @@ versioned "DASIR2" intermediate stream.
 Private "DAS2" imports "DASIR2" and performs pass 2, final symbol resolution,
 peephole optimization, relocation, and DXR output.
 
-The default transport is a private ".D2R" phase file.  "-P" carries the
-same sequential intermediate stream over a pipe.  DOBJ output remains an
-in-process path.
+The default host transport is a private ".D2R" phase file.  Host "-P" carries
+the same sequential intermediate stream over a pipe.  DOBJ output remains an
+in-process path.  The DAIMOS-resident driver does not implement "-P" and uses
+the private file-backed DASIR2 phase transport exclusively.
 
 Resident work is bounded.  Large symbol, literal, repeated/macro-source, and
 intermediate data use scratch backing rather than unbounded resident tables.
