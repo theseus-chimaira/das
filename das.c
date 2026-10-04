@@ -84,6 +84,7 @@ typedef unsigned long long das_word_t;
 #define DAS_INPUT_TOOLONG -2
 #define DAS_INPUT_ASCII 0
 #define DAS_INPUT_S6REC 1
+#define DAS_INPUT_AUTO 2
 #define DAS_S6REC_COUNT_MASK DAS_W(077777777)
 #define DAS_S6REC_TYPE_SHIFT 30U
 #define DAS_S6REC_TYPE_MASK 077U
@@ -1330,6 +1331,70 @@ static int host_char_get(void *arg, unsigned int *ch)
     }
     *ch = (unsigned int)(unsigned char)in->buffer[in->pos++];
     return DAS_INPUT_OK;
+}
+
+/* Return nonzero only when the entire host file is a structurally valid
+ * S6REC text stream.  Detection is deliberately strict: every 36-bit word
+ * must use the canonical eight-byte host container and every record header
+ * must be a text record whose payload is completely present.  This avoids
+ * classifying ordinary ASCII as S6REC from a coincidental first word. */
+static int
+host_file_is_s6rec(FILE *f)
+{
+    unsigned char b[8];
+    unsigned long lo;
+    unsigned int hi;
+    unsigned long len;
+    unsigned long words;
+    unsigned long i;
+    int saw_record;
+
+    if (fseek(f, 0L, SEEK_SET) != 0)
+        return 0;
+    saw_record = 0;
+    for (;;) {
+        size_t n;
+
+        n = fread(b, 1U, sizeof(b), f);
+        if (n == 0U) {
+            if (ferror(f))
+                goto not_s6rec;
+            break;
+        }
+        if (n != sizeof(b))
+            goto not_s6rec;
+        if ((b[4] & 0360U) != 0U || b[5] != 0U || b[6] != 0U || b[7] != 0U)
+            goto not_s6rec;
+        lo = (unsigned long)b[0] |
+            ((unsigned long)b[1] << 8) |
+            ((unsigned long)b[2] << 16) |
+            ((unsigned long)b[3] << 24);
+        hi = (unsigned int)b[4];
+        if (hi != 0U)
+            goto not_s6rec;
+        if (((lo >> DAS_S6REC_TYPE_SHIFT) & DAS_S6REC_TYPE_MASK) !=
+            DAS_S6REC_TEXT)
+            goto not_s6rec;
+        len = lo & DAS_S6REC_COUNT_MASK;
+        words = (len + 5UL) / 6UL;
+        for (i = 0UL; i < words; ++i) {
+            n = fread(b, 1U, sizeof(b), f);
+            if (n != sizeof(b))
+                goto not_s6rec;
+            if ((b[4] & 0360U) != 0U || b[5] != 0U || b[6] != 0U ||
+                b[7] != 0U)
+                goto not_s6rec;
+        }
+        saw_record = 1;
+    }
+    (void)fseek(f, 0L, SEEK_SET);
+    clearerr(f);
+    return saw_record;
+
+not_s6rec:
+    (void)fseek(f, 0L, SEEK_SET);
+    clearerr(f);
+    return 0;
 }
 
 #endif
@@ -9530,6 +9595,9 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
     reader.get = das_s6_get;
     reader.arg = &s6;
 #else
+    if (input_format == DAS_INPUT_AUTO)
+        input_format = host_file_is_s6rec(f) ? DAS_INPUT_S6REC :
+            DAS_INPUT_ASCII;
     if (input_format == DAS_INPUT_S6REC) {
         das_s6_init(&s6, host_word_get, &words);
         reader.get = das_s6_get;
@@ -11128,7 +11196,7 @@ static int das_main_text(int argc, char **argv)
 
     out = NULL;
     in = NULL;
-    input_format = DAS_INPUT_ASCII;
+    input_format = DAS_INPUT_AUTO;
     pipe_mode = 0;
     prog = strrchr(argv[0], '/');
     prog = prog != NULL ? prog + 1 : argv[0];

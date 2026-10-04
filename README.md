@@ -76,8 +76,11 @@ Important options:
 - "-C" emits DOBJ instead of DXR.
 - "-B" restricts instructions to the base PDP-6/KA10 set.
 - "-K" enables the corresponding kernel/I/O instruction mode.
-- "-A" selects ordinary ASCII source input.
-- "-S" selects S6REC source input.
+- Source input is detected automatically. Host DAS accepts ordinary ASCII or
+  S6REC source without an input-format option; resident DAS reads the native
+  S6REC filesystem representation.
+- "-A" forces ordinary ASCII source input and "-S" forces S6REC input.  These
+  are compatibility/diagnostic overrides; normal builds should omit both.
 - "-F" enables the peephole/folding optimizer in host builds.  Resident DAS
   accepts it for command-line compatibility but does not compile the optimizer.
 - "-P" is implemented by the host assembler but is not implemented by the
@@ -89,8 +92,8 @@ Important options:
 
 DAS uses uppercase short options only. "-O FILE" always selects the output
 file.  Host DAS uses "-F" to enable optimization; resident DAS accepts "-F"
-as a compatibility no-op. DAIMOS filesystem text is S6REC, so "-S" is the
-normal source form when DAS runs under DAIMOS.
+as a compatibility no-op.  Input storage format is not part of the assembly
+language and normally requires no command-line selection.
 
 DOBJ mode is linked by "DLINK" from "PDP10-TOOLS". "-C" and "-F" may be used
 together; optimized DOBJ output retains the required relocation records.
