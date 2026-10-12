@@ -172,13 +172,27 @@ static int validate(const struct dxr_file *dxr,
     if (dxr->nwords == reloc_end) {
         header_words = 2U;
     } else {
+        unsigned int tag;
+        unsigned int value;
+
         header_words = 3U;
-        if (DXR_LH(dxr->words[2]) > image_words) {
-            fprintf(stderr, "dxrcheck: text size exceeds image size\n");
-            return 1;
-        }
-        if (DXR_RH(dxr->words[2]) != 0647022ULL) {
-            fprintf(stderr, "dxrcheck: bad DXR2 text metadata tag\n");
+        tag = DXR_RH(dxr->words[2]);
+        value = DXR_LH(dxr->words[2]);
+        if (tag == 0647022U) { /* SIXBIT /TX2/ */
+            if (value > image_words) {
+                fprintf(stderr, "dxrcheck: text size exceeds image size\n");
+                return 1;
+            }
+        } else if (tag == 0636422U) { /* SIXBIT /ST2/ */
+            /* ST2 replaces the text-prefix field in *uncompressed,
+             * non-PURE* DXR2. Its LH is an explicit stack reservation. */
+            if (value < 00400U || value > 02000U ||
+                (DXR_RH(w1) & 0300000U) != 0U) {
+                fprintf(stderr, "dxrcheck: invalid ST2 stack reservation\n");
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "dxrcheck: bad DXR2 metadata tag\n");
             return 1;
         }
     }
