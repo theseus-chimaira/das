@@ -132,6 +132,7 @@ install: all
 	done
 	cd "${DESTDIR}${BINDIR}" && ${LN} das ${ALIAS}
 	mkdir -p "${DESTDIR}${MANUALDIR}"
+	rm -f "${DESTDIR}${MANUALDIR}/DAS.SIXMD"
 	cp "${MANUAL}" "${DESTDIR}${MANUALDIR}/DAS.SIXMD"
 	chmod 444 "${DESTDIR}${MANUALDIR}/DAS.SIXMD"
 
