@@ -2303,19 +2303,21 @@ static void sym_copy(struct sym *dst, const struct sym *src)
     dst->sec = src->sec;
     dst->off = src->off;
 }
-static int find_sym(struct asmctx *c, const char *name, struct sym *out)
+/* Share the same spill record and cache mechanics across normal symbols,
+ * visibility/indexed-XCT markers and DOBJ globals.  Only the caller's
+ * hash namespace differs; no extra resident index is required. */
+static int find_sym_hashed(struct asmctx *c, const char *name,
+                           das_word_t hash, struct sym *out)
 {
     struct das_sym_store *store;
     struct das_sym_cache *cache;
     das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
     unsigned int bucket;
     unsigned int ref;
     unsigned int ci;
     struct sym found;
 
     store = &c->sym_store;
-    hash = sym_hash(name);
     ci = sym_cache_index(hash);
     cache = &store->cache[ci];
     store->lookups++;
@@ -2347,19 +2349,22 @@ static int find_sym(struct asmctx *c, const char *name, struct sym *out)
     }
     return 0;
 }
-static void add_sym(struct asmctx *c, const char *name, int sec,
-                    das_word_t value)
+static int find_sym(struct asmctx *c, const char *name, struct sym *out)
+{
+    return find_sym_hashed(c, name, sym_hash(name), out);
+}
+
+static void add_sym_hashed(struct asmctx *c, const char *name,
+                           das_word_t hash, int sec, das_word_t value)
 {
     struct das_sym_store *store;
     struct das_sym_cache *cache;
     das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
     unsigned int bucket;
     unsigned int ref;
     unsigned int ci;
 
     store = &c->sym_store;
-    hash = sym_hash(name);
     bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
     ref = store->records + 1U;
     sym_record_pack(record, store->heads[bucket], hash, name, sec, value);
@@ -2377,6 +2382,11 @@ static void add_sym(struct asmctx *c, const char *name, int sec,
     cache->sym.sec = sec;
     cache->sym.off = value & DAS_WORD_MASK;
 }
+static void add_sym(struct asmctx *c, const char *name, int sec,
+                    das_word_t value)
+{
+    add_sym_hashed(c, name, sym_hash(name), sec, value);
+}
 
 /* Indexed XCT can enter any word in its target table.  Keep a distinct
  * spill-backed marker namespace so this information costs no fixed RAM. */
@@ -2388,55 +2398,20 @@ static das_word_t indexed_xct_hash(const char *name)
 
 static int find_indexed_xct_marker(struct asmctx *c, const char *name)
 {
-    struct das_sym_store *store;
-    das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
-    unsigned int bucket;
-    unsigned int ref;
     struct sym found;
 
-    store = &c->sym_store;
-    hash = indexed_xct_hash(name);
-    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
-    ref = store->heads[bucket];
-    while (ref != 0U) {
-        if (wordfile_read(&store->spill,
-                (ref - 1U) * DAS_SYM_RECORD_WORDS,
-                record, DAS_SYM_RECORD_WORDS) != 0)
-            die("symbol scratch read failed");
-        if (record[1] == hash) {
-            sym_record_unpack(record, &found);
-            if (strcmp(found.name, name) == 0 &&
-                (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS)
-                return 1;
-        }
-        ref = (unsigned int)(record[0] & DAS_HALF_MASK);
-    }
-    return 0;
+    if (!find_sym_hashed(c, name, indexed_xct_hash(name), &found))
+        return 0;
+    return (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS;
 }
 
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
 static void mark_indexed_xct_target(struct asmctx *c, const char *name)
 {
-    struct das_sym_store *store;
-    das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
-    unsigned int bucket;
-    unsigned int ref;
-
     if (find_indexed_xct_marker(c, name))
         return;
-    store = &c->sym_store;
-    hash = indexed_xct_hash(name);
-    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
-    ref = store->records + 1U;
-    sym_record_pack(record, store->heads[bucket], hash, name,
+    add_sym_hashed(c, name, indexed_xct_hash(name),
         DAS_SEC_ABS | DAS_SYM_KIND_VIS, DAS_W(0));
-    if (wordfile_append(&store->spill, record,
-            DAS_SYM_RECORD_WORDS) != 0)
-        die("symbol scratch write failed");
-    store->heads[bucket] = ref;
-    store->records = ref;
 }
 #endif
 #endif
@@ -2450,33 +2425,9 @@ static das_word_t visibility_hash(const char *name)
 static int find_visible_marker(struct asmctx *c, const char *name,
                                struct sym *out)
 {
-    struct das_sym_store *store;
-    das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
-    unsigned int bucket;
-    unsigned int ref;
-    struct sym found;
-
-    store = &c->sym_store;
-    hash = visibility_hash(name);
-    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
-    ref = store->heads[bucket];
-    while (ref != 0U) {
-        if (wordfile_read(&store->spill,
-                (ref - 1U) * DAS_SYM_RECORD_WORDS,
-                record, DAS_SYM_RECORD_WORDS) != 0)
-            die("symbol scratch read failed");
-        if (record[1] == hash) {
-            sym_record_unpack(record, &found);
-            if (strcmp(found.name, name) == 0 &&
-                (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS) {
-                sym_copy(out, &found);
-                return 1;
-            }
-        }
-        ref = (unsigned int)(record[0] & DAS_HALF_MASK);
-    }
-    return 0;
+    if (!find_sym_hashed(c, name, visibility_hash(name), out))
+        return 0;
+    return (out->sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS;
 }
 
 static void mark_symbol_visible(struct asmctx *c, const char *name)
@@ -2524,39 +2475,16 @@ static das_word_t native_obj_hash(const char *name)
 
 static unsigned int native_obj_find(struct asmctx *c, const char *name)
 {
-    struct das_sym_store *store;
-    das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
-    unsigned int bucket;
-    unsigned int ref;
     struct sym found;
 
-    store = &c->sym_store;
-    hash = native_obj_hash(name);
-    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
-    ref = store->heads[bucket];
-    while (ref != 0U) {
-        if (wordfile_read(&store->spill,
-                (ref - 1U) * DAS_SYM_RECORD_WORDS,
-                record, DAS_SYM_RECORD_WORDS) != 0)
-            die("object global scratch read failed");
-        if (record[1] == hash) {
-            sym_record_unpack(record, &found);
-            if (strcmp(found.name, name) == 0 &&
-                (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS)
-                return (unsigned int)found.off;
-        }
-        ref = (unsigned int)(record[0] & DAS_HALF_MASK);
-    }
+    if (find_sym_hashed(c, name, native_obj_hash(name), &found) &&
+        (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS)
+        return (unsigned int)found.off;
     return 0U;
 }
 
 static unsigned int native_obj_add(struct asmctx *c, const char *name)
 {
-    struct das_sym_store *store;
-    das_word_t record[DAS_SYM_RECORD_WORDS];
-    das_word_t hash;
-    unsigned int bucket;
     unsigned int next;
     unsigned int found;
 
@@ -2567,16 +2495,9 @@ static unsigned int native_obj_add(struct asmctx *c, const char *name)
         c->obj_global_count == DAS_HALF_MASK ||
         c->sym_store.records == DAS_HALF_MASK)
         die("too many object globals");
-    store = &c->sym_store;
-    hash = native_obj_hash(name);
-    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
     next = c->obj_global_count + 1U;
-    sym_record_pack(record, store->heads[bucket], hash, name,
+    add_sym_hashed(c, name, native_obj_hash(name),
         DAS_SEC_ABS | DAS_SYM_KIND_VIS, (das_word_t)next);
-    if (wordfile_append(&store->spill, record,
-            DAS_SYM_RECORD_WORDS) != 0)
-        die("object global scratch write failed");
-    store->heads[bucket] = ++store->records;
     c->obj_global_count = next;
     return next;
 }
