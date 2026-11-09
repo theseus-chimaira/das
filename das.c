@@ -162,6 +162,17 @@ struct das_s6reader {
     int newline;
 };
 
+#ifdef DAS_NATIVE
+/* Native KCC emits five ASCII7 characters in each 36-bit word.  Keep
+ * the reader separate from S6REC but share its buffered word source. */
+struct das_a7reader {
+    struct das_word_reader words;
+    das_word_t packed;
+    unsigned int slot;
+    int ended;
+};
+#endif
+
 /* All textual input is normalized to 7-bit ASCII before lexical analysis.
  * On a 9-bit DAIMOS C implementation this clears both high bits of char.
  */
@@ -260,6 +271,62 @@ static void das_s6_init(struct das_s6reader *r,
     r->slot = 6U;
     r->newline = 0;
 }
+
+#ifdef DAS_NATIVE
+static int das_a7_get(void *arg, unsigned int *ch)
+{
+    struct das_a7reader *r;
+    unsigned int c;
+    int rc;
+
+    r = (struct das_a7reader *)arg;
+    if (r == 0 || ch == 0)
+        return DAS_INPUT_ERROR;
+    if (r->ended)
+        return DAS_INPUT_EOF;
+    if (r->slot >= 5U) {
+        rc = r->words.get(r->words.arg, &r->packed);
+        if (rc == DAS_INPUT_EOF) {
+            r->ended = 1;
+            return DAS_INPUT_EOF;
+        }
+        if (rc != DAS_INPUT_OK || (r->packed & DAS_W(1)) != DAS_W(0))
+            return DAS_INPUT_ERROR;
+        r->slot = 0U;
+    }
+    c = (unsigned int)((r->packed >> (29U - r->slot * 7U)) &
+                       DAS_W(0177));
+    r->slot++;
+    if (c == 0U) {
+        /* A partial final word is zero-padded.  Embedded NUL or
+         * noncanonical padding must never truncate assembler input. */
+        while (r->slot < 5U) {
+            if (((r->packed >> (29U - r->slot * 7U)) &
+                 DAS_W(0177)) != DAS_W(0))
+                return DAS_INPUT_ERROR;
+            r->slot++;
+        }
+        rc = r->words.get(r->words.arg, &r->packed);
+        if (rc != DAS_INPUT_EOF)
+            return DAS_INPUT_ERROR;
+        r->ended = 1;
+        return DAS_INPUT_EOF;
+    }
+    *ch = c;
+    return DAS_INPUT_OK;
+}
+
+static void das_a7_init(struct das_a7reader *r,
+                        int (*getword)(void *, das_word_t *),
+                        void *arg)
+{
+    r->words.get = getword;
+    r->words.arg = arg;
+    r->packed = DAS_W(0);
+    r->slot = 5U;
+    r->ended = 0;
+}
+#endif
 #endif
 
 #define DAS_OP_COUNT 390U
@@ -1493,8 +1560,33 @@ static size_t char_distance(const char *first, const char *last)
 static char *skipws(char *p) { while (*p && isspace((unsigned char)*p)) p++; return p; }
 static void rtrim(char *p) { size_t n = strlen(p); while (n && isspace((unsigned char)p[n - 1])) p[--n] = 0; }
 #ifdef DAS_NATIVE
-static int streqi(const char *a, const char *b) { return strcmp(a, b) == 0; }
-static int pref_i(const char *a, const char *b, size_t n) { size_t i; for (i = 0; i < n; i++) if (a[i] != b[i]) return 0; return 1; }
+/* Native ASCII7 accepts mixed-case assembly mnemonics, directives and
+ * keywords.  Fold only while comparing tokens: never modify source
+ * labels or quoted character data. */
+static int das_ascii_upper(int c)
+{
+    return c >= 'a' && c <= 'z' ? c - 'a' + 'A' : c;
+}
+static int streqi(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (das_ascii_upper((unsigned char)*a) !=
+            das_ascii_upper((unsigned char)*b))
+            return 0;
+        ++a;
+        ++b;
+    }
+    return *a == 0 && *b == 0;
+}
+static int pref_i(const char *a, const char *b, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; ++i)
+        if (das_ascii_upper((unsigned char)a[i]) !=
+            das_ascii_upper((unsigned char)b[i]))
+            return 0;
+    return 1;
+}
 #else
 static int streqi(const char *a, const char *b) { while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0; a++; b++; } return *a == 0 && *b == 0; }
 static int pref_i(const char *a, const char *b, size_t n) { size_t i; for (i = 0; i < n; i++) if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return 0; return 1; }
@@ -1585,7 +1677,7 @@ static enum das_token classify_token(struct asmctx *c, const char *key)
     if (pref_i(key, "P2ALIGN", 7) && key[7] == 0)
         return DAS_TOK_ALIGN;
 #ifdef DAS_NATIVE
-    first = (unsigned int)((unsigned char)key[0] - 'A');
+    first = (unsigned int)(das_ascii_upper((unsigned char)key[0]) - 'A');
 #else
     first = (unsigned int)(tolower((unsigned char)key[0]) - 'a');
 #endif
@@ -9523,7 +9615,15 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
     struct host_char_input chars;
 #endif
     struct host_word_input words;
+#ifdef DAS_NATIVE
+    /* Both decoder representations occupy the same stack storage. */
+    union {
+        struct das_s6reader s6;
+        struct das_a7reader a7;
+    } source;
+#else
     struct das_s6reader s6;
+#endif
     struct das_char_reader reader;
     char *line;
     char *inc;
@@ -9590,10 +9690,15 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
     words.pos = 0U;
     words.count = 0U;
 #ifdef DAS_NATIVE
-    (void)input_format;
-    das_s6_init(&s6, host_word_get, &words);
-    reader.get = das_s6_get;
-    reader.arg = &s6;
+    if (input_format == DAS_INPUT_ASCII) {
+        das_a7_init(&source.a7, host_word_get, &words);
+        reader.get = das_a7_get;
+        reader.arg = &source.a7;
+    } else {
+        das_s6_init(&source.s6, host_word_get, &words);
+        reader.get = das_s6_get;
+        reader.arg = &source.s6;
+    }
 #else
     if (input_format == DAS_INPUT_AUTO)
         input_format = host_file_is_s6rec(f) ? DAS_INPUT_S6REC :
@@ -11331,6 +11436,9 @@ int das_native_main(int argc, kword_t **argv)
     int have_out;
     int have_in;
     int i;
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
+    int input_format;
+#endif
 #if defined(DAS_NATIVE_PHASE1_ONLY) || defined(DAS_NATIVE_PHASE2_ONLY)
     size_t n;
 #endif
@@ -11347,6 +11455,9 @@ int das_native_main(int argc, kword_t **argv)
         return 1;
     have_out = 0;
     have_in = 0;
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
+    input_format = DAS_INPUT_S6REC;
+#endif
     for (i = 1; i < argc; i++) {
         if (das_counted_sixbit_arg_text((const das_word_t *)argv[i],
                 argtext, sizeof(argtext)) != 0)
@@ -11367,7 +11478,9 @@ int das_native_main(int argc, kword_t **argv)
             das_optimize = 1;
 #endif
         } else if (strcmp(argtext, "-S") == 0) {
-            /* Native DAS input is always S6REC. */
+            input_format = DAS_INPUT_S6REC;
+        } else if (strcmp(argtext, "-A") == 0) {
+            input_format = DAS_INPUT_ASCII;
 #endif
         } else {
             if (argtext[0] == '-')
@@ -11398,11 +11511,11 @@ int das_native_main(int argc, kword_t **argv)
     strcopy(phase, out, sizeof(phase));
     strcopy(phase + n, ".D2R", sizeof(phase) - n);
     (void)remove(phase);
-    return assemble_phase1_file(in, out, phase, DAS_INPUT_S6REC);
+    return assemble_phase1_file(in, out, phase, input_format);
 #elif defined(DAS_NATIVE_PHASE2_ONLY)
     return assemble_phase2_file(in, out);
 #else
-    return assemble_file(in, out, DAS_INPUT_S6REC);
+    return assemble_file(in, out, input_format);
 #endif
 }
 
