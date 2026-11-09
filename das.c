@@ -1206,6 +1206,10 @@ struct asmctx {
     struct das_lit_store lit_store;
     struct das_wordfile rept_spill;
     struct das_wordfile ir_spill;
+#ifdef DAS_NATIVE
+    struct das_wordfile obj_reloc_spill;
+    unsigned int obj_reloc_count;
+#endif
     unsigned int loc[4];
     unsigned int entry;
     unsigned int relmap_words;
@@ -1249,12 +1253,6 @@ struct asmctx {
     int object_mode;
     unsigned int obj_global_count;
     unsigned int obj_entry_symbol;
-#ifndef DAS_NATIVE
-    struct das_obj_global *obj_globals;
-    unsigned int obj_global_cap;
-    struct das_obj_reloc *obj_relocs;
-    unsigned int obj_reloc_count;
-    unsigned int obj_reloc_cap;
     int eval_reloc_kind;
     int eval_target_sec;
     unsigned int eval_symbol;
@@ -1263,6 +1261,12 @@ struct asmctx {
     int eval_lh_target_sec;
     unsigned int eval_lh_symbol;
     das_word_t eval_lh_addend;
+#ifndef DAS_NATIVE
+    struct das_obj_global *obj_globals;
+    unsigned int obj_global_cap;
+    struct das_obj_reloc *obj_relocs;
+    unsigned int obj_reloc_count;
+    unsigned int obj_reloc_cap;
     struct das_set_reloc *set_relocs;
     unsigned int set_reloc_cap;
 #endif
@@ -1273,11 +1277,9 @@ struct asmctx {
 
 struct das_output {
     FILE *file;
-#ifndef DAS_NATIVE
     struct asmctx *ctx;
     int object_mode;
     unsigned int header_words;
-#endif
     das_word_t *relmap;
     unsigned int relmap_words;
     unsigned int image_words;
@@ -2242,6 +2244,9 @@ static int store_init_phase2(struct asmctx *c, const char *scratch_base)
     memset(&c->rept_spill, 0, sizeof(c->rept_spill));
     memset(&c->ir_spill, 0, sizeof(c->ir_spill));
 #ifdef DAS_NATIVE
+    memset(&c->obj_reloc_spill, 0, sizeof(c->obj_reloc_spill));
+#endif
+#ifdef DAS_NATIVE
     if (scratch_open(&c->sym_store.spill, scratch_base, ".DSY") != 0)
         return -1;
     if (scratch_open(&c->lit_store.spill, scratch_base, ".DLT") != 0) {
@@ -2268,6 +2273,13 @@ static int store_init_phase2(struct asmctx *c, const char *scratch_base)
 
 static void store_close(struct asmctx *c)
 {
+#ifdef DAS_NATIVE
+    if (c->obj_reloc_spill.file != 0) {
+        fclose(c->obj_reloc_spill.file);
+        c->obj_reloc_spill.file = 0;
+        (void)remove(c->obj_reloc_spill.path);
+    }
+#endif
     if (c->sym_store.spill.file != 0) {
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
@@ -2473,7 +2485,7 @@ static das_word_t native_obj_hash(const char *name)
     return das_mask36(sym_hash(name) ^ DAS_W(0363636363636));
 }
 
-static unsigned int native_obj_find(struct asmctx *c, const char *name)
+static unsigned int obj_global_find(struct asmctx *c, const char *name)
 {
     struct sym found;
 
@@ -2483,12 +2495,12 @@ static unsigned int native_obj_find(struct asmctx *c, const char *name)
     return 0U;
 }
 
-static unsigned int native_obj_add(struct asmctx *c, const char *name)
+static unsigned int obj_global_add(struct asmctx *c, const char *name)
 {
     unsigned int next;
     unsigned int found;
 
-    found = native_obj_find(c, name);
+    found = obj_global_find(c, name);
     if (found != 0U)
         return found;
     if (strlen(name) > DAS_MAX_NAME ||
@@ -2524,12 +2536,53 @@ static int native_obj_global_list(struct asmctx *c, const char *rest)
             name[n++] = *p++;
         }
         name[n] = 0;
-        (void)native_obj_add(c, name);
+        (void)obj_global_add(c, name);
         while (*p != 0 && isspace((unsigned char)*p))
             p++;
         if (*p != 0 && *p != ',')
             return -1;
     }
+}
+#endif
+
+#if !defined(DAS_NATIVE_PHASE1_ONLY)
+/* DOBJ relocation triples are appended directly to a disk-backed wordfile.
+ * Native DAS2 retains only a count, not an array proportional to image size. */
+static das_word_t obj_18_addend(das_word_t addend)
+{
+    unsigned int lh;
+    unsigned int rh;
+
+    lh = (unsigned int)((addend >> 18U) & DAS_HALF_MASK);
+    rh = DAS_MASK18(addend);
+    if (lh == DAS_HALF_MASK && (rh & 0400000U) != 0U)
+        return DAS_WORD(DAS_HALF_MASK, rh);
+    return DAS_WORD(0U, rh);
+}
+
+static int obj_reloc_add(struct asmctx *c, int loc_sec, unsigned int offset,
+                         int type, int target_sec, unsigned int symbol,
+                         das_word_t addend)
+{
+    das_word_t record[3];
+
+    if (c->obj_reloc_spill.file == 0 ||
+        c->obj_reloc_count >= DAS_HALF_MASK ||
+        offset > DAS_HALF_MASK || symbol > DAS_HALF_MASK ||
+        loc_sec < DAS_SEC_TEXT || loc_sec > DAS_SEC_DATA ||
+        target_sec < DAS_SEC_ABS || target_sec > DAS_SEC_BSS ||
+        type < DAS_OBJ_RELOC_LOCAL_RH18 ||
+        type > DAS_OBJ_RELOC_SYMBOL_LH18)
+        return -1;
+    record[0] = DAS_WORD(((unsigned int)loc_sec << 15U) |
+        ((unsigned int)type << 12U) |
+        ((unsigned int)target_sec << 9U), offset);
+    record[1] = DAS_WORD(0U, symbol);
+    record[2] = obj_18_addend(addend);
+    if (wordfile_append(&c->obj_reloc_spill, record, 3U) != 0)
+        return -1;
+    c->obj_reloc_count++;
+    return 0;
 }
 #endif
 #endif
@@ -3250,11 +3303,9 @@ struct expr_state {
 struct expr_value {
     das_word_t value;
     int rel;
-#ifndef DAS_NATIVE
     int reloc_kind;
     int target_sec;
     unsigned int symbol;
-#endif
 };
 
 #ifndef DAS_NATIVE
@@ -3290,11 +3341,9 @@ static struct expr_value expr_abs(das_word_t value)
     struct expr_value v;
     v.value = das_mask36(value);
     v.rel = 0;
-#ifndef DAS_NATIVE
     v.reloc_kind = 0;
     v.target_sec = DAS_SEC_ABS;
     v.symbol = 0U;
-#endif
     return v;
 }
 
@@ -3353,7 +3402,6 @@ static das_word_t expr_signed_div(das_word_t a, das_word_t b, int remainder)
 
 static struct expr_value parse_expr_or(struct expr_state *st);
 
-#ifndef DAS_NATIVE
 static void expr_set_local(struct expr_value *v, int sec)
 {
     v->reloc_kind = DAS_OBJ_RELOC_LOCAL_RH18;
@@ -3367,7 +3415,6 @@ static void expr_set_symbol(struct expr_value *v, unsigned int symbol)
     v->target_sec = DAS_SEC_ABS;
     v->symbol = symbol;
 }
-#endif
 
 static unsigned int set_snapshot_generation(const char *name)
 {
@@ -3430,7 +3477,6 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
             tok[n++] = *q++;
         tok[n] = 0;
         if (!find_sym(st->c, tok, &sym)) {
-#ifndef DAS_NATIVE
             unsigned int gi;
             gi = st->c->object_mode ? obj_global_find(st->c, tok) : 0U;
             if (gi != 0U) {
@@ -3440,7 +3486,6 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
                 st->p = q;
                 return out;
             }
-#endif
             if (!st->c->eval_silent)
                 fprintf(stderr, DAS_DIAG("das: undef\n", "das: undefined symbol %s\n"), tok);
             st->failed = 1;
@@ -3462,22 +3507,20 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
             out.value = sec_base(st->c, sym.sec & DAS_SYM_SEC_MASK) + sym.off;
         out.value = das_mask36(out.value);
         out.rel = (sym.sec & DAS_SYM_SEC_MASK) != DAS_SEC_ABS;
-#ifndef DAS_NATIVE
         if (out.rel) {
             expr_set_local(&out, sym.sec & DAS_SYM_SEC_MASK);
+#ifndef DAS_NATIVE
             if (set_generation != 0U)
                 (void)set_reloc_apply(st->c, set_generation, &out);
-        }
 #endif
+        }
         st->p = q;
         return out;
     }
     if (*st->p == '.') {
         out.value = st->dot;
         out.rel = 1;
-#ifndef DAS_NATIVE
         expr_set_local(&out, -1);
-#endif
         st->p++;
         return out;
     }
@@ -3497,7 +3540,6 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
             tok[n++] = *st->p++;
         tok[n] = 0;
         if (!find_sym(st->c, tok, &sym)) {
-#ifndef DAS_NATIVE
             unsigned int gi;
             gi = st->c->object_mode ? obj_global_add(st->c, tok) : 0U;
             if (gi != 0U) {
@@ -3506,7 +3548,6 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
                 expr_set_symbol(&out, gi);
                 return out;
             }
-#endif
             if (!st->c->eval_silent)
                 fprintf(stderr, DAS_DIAG("das: undef\n", "das: undefined symbol %s\n"), tok);
             st->failed = 1;
@@ -3528,13 +3569,13 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
             out.value = sec_base(st->c, sym.sec & DAS_SYM_SEC_MASK) + sym.off;
         out.value = das_mask36(out.value);
         out.rel = (sym.sec & DAS_SYM_SEC_MASK) != DAS_SEC_ABS;
-#ifndef DAS_NATIVE
         if (out.rel) {
             expr_set_local(&out, sym.sec & DAS_SYM_SEC_MASK);
+#ifndef DAS_NATIVE
             if (set_generation != 0U)
                 (void)set_reloc_apply(st->c, set_generation, &out);
-        }
 #endif
+        }
         return out;
     }
     expr_error(st, "malformed expression");
@@ -3701,7 +3742,6 @@ static struct expr_value parse_expr_add(struct expr_state *st)
         st->p++;
         b = parse_expr_mul(st);
         if (op == '+') {
-#ifndef DAS_NATIVE
             if (a.rel == 0 && b.rel != 0) {
                 a.reloc_kind = b.reloc_kind;
                 a.target_sec = b.target_sec;
@@ -3711,11 +3751,9 @@ static struct expr_value parse_expr_add(struct expr_state *st)
                 a.target_sec = DAS_SEC_ABS;
                 a.symbol = 0U;
             }
-#endif
             a.value = das_mask36(a.value + b.value);
             a.rel += b.rel;
         } else {
-#ifndef DAS_NATIVE
             if (a.rel == 0 || b.rel != 0) {
                 if (a.rel == 0 && b.rel == 0) {
                     a.reloc_kind = 0;
@@ -3727,7 +3765,6 @@ static struct expr_value parse_expr_add(struct expr_state *st)
                     a.symbol = 0U;
                 }
             }
-#endif
             a.value = das_mask36(a.value - b.value);
             a.rel -= b.rel;
         }
@@ -3849,7 +3886,6 @@ static int eval_expr_radix(struct asmctx *c, const char *in, unsigned int dot,
         return -1;
     *val = das_mask36(out.value);
     *reloc = out.rel == 1 ? DAS_RELOC_ADDR18 : DAS_RELOC_NONE;
-#ifndef DAS_NATIVE
     if (c->object_mode && out.rel == 1) {
         c->eval_reloc_kind = out.reloc_kind;
         c->eval_target_sec = out.target_sec;
@@ -3861,7 +3897,6 @@ static int eval_expr_radix(struct asmctx *c, const char *in, unsigned int dot,
         c->eval_symbol = 0U;
         c->eval_addend = DAS_W(0);
     }
-#endif
     return 0;
 }
 
@@ -3983,14 +4018,12 @@ static char *matching_rbracket(char *s)
 
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static int parse_ea(struct asmctx *c, char *s, unsigned int dot, unsigned int *y, int *ind, int *xr, int *reloc) { das_word_t v; *ind = 0; *xr = 0; *reloc = 0; s = skipws(s); if (!*s) { *y = 0; return 0; } while (*s == '@') { *ind = 1; s++; } if (*s == '[') { char *rb = matching_rbracket(s); unsigned int litoff; unsigned int len; if (!rb) return -1; len = (unsigned int)char_distance(s + 1, rb); if (len >= DAS_MAX_LINE) len = DAS_MAX_LINE - 1U; { char canon[DAS_MAX_LINE]; int clen; clen = literal_canonicalize(c, s + 1, len, canon, sizeof(canon)); if (clen >= 0) { if (!lit_find_text(c, canon, (unsigned int)clen, &litoff) && !lit_find_text(c, s + 1, len, &litoff)) return -1; } else if (!lit_find_text(c, s + 1, len, &litoff)) return -1; } *y = text_total(c) - c->lit_store.image_words + litoff; *reloc = DAS_RELOC_ADDR18;
-#ifndef DAS_NATIVE
     if (c->object_mode) {
         c->eval_reloc_kind = DAS_OBJ_RELOC_LOCAL_RH18;
         c->eval_target_sec = DAS_SEC_TEXT;
         c->eval_symbol = 0U;
         c->eval_addend = (das_word_t)*y;
     }
-#endif
     return 0; } if (pref_i(s, "POINT", 5) && isspace((unsigned char)s[5])) { char *c1, *c2; s = skipws(s + 5); c1 = strchr(s, ','); if (!c1) return -1; c2 = strchr(c1 + 1, ','); if (c2) *c2 = 0; return parse_ea(c, skipws(c1 + 1), dot, y, ind, xr, reloc); } (void)parse_index_suffix(s, xr); rtrim(s); if (!*s) { *y = 0; *reloc = 0; return 0; } if (eval_expr_octal(c, s, dot, &v, reloc) != 0) return -1; *y = DAS_MASK18(v); return 0; }
 #endif
 
@@ -5997,7 +6030,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
             (void)obj_global_add(c, c->entry_name);
 #else
         if (c->object_mode && c->entry_name[0] != 0)
-            c->obj_entry_symbol = native_obj_add(c, c->entry_name);
+            c->obj_entry_symbol = obj_global_add(c, c->entry_name);
 #endif
         return 0;
     case DAS_TOK_GLOBAL:
@@ -6076,7 +6109,7 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
             (void)obj_global_add(c, name);
 #else
         if (c->object_mode && parsed.token == DAS_TOK_COMM)
-            (void)native_obj_add(c, name);
+            (void)obj_global_add(c, name);
 #endif
         c->loc[DAS_SEC_BSS] += words;
         return 0;
@@ -6342,7 +6375,6 @@ static int output_queue(struct das_output *out, unsigned int pos,
 }
 #endif
 
-#ifndef DAS_NATIVE
 static void output_object_location(struct das_output *out, unsigned int off,
                                    int *loc_sec, unsigned int *loc_off)
 {
@@ -6358,6 +6390,7 @@ static void output_object_location(struct das_output *out, unsigned int off,
     }
 }
 
+#ifndef DAS_NATIVE
 static int obj_reloc_at_output(struct das_output *out,
                                const struct das_obj_reloc *r,
                                unsigned int off)
@@ -6436,6 +6469,7 @@ static int obj_reloc_same_output(struct das_output *out,
     }
     return 1;
 }
+#endif
 
 static int output_object_relocate_word(struct das_output *out,
                                        unsigned int off,
@@ -6520,7 +6554,6 @@ static int output_object_relocate_word(struct das_output *out,
         *word &= ~((das_word_t)DAS_HALF_MASK);
     return 0;
 }
-#endif
 
 #if DAS_ENABLE_OPTIMIZER
 #ifdef DAS_NATIVE
@@ -6556,7 +6589,10 @@ static int output_emit(struct das_output *out, unsigned int off,
     if (off >= out->image_words)
         return -1;
 #ifdef DAS_NATIVE
-    if (output_queue(out, off + 2U, word) != 0)
+    if (out->object_mode && reloc &&
+        output_object_relocate_word(out, off, &word, reloc) != 0)
+        return -1;
+    if (output_queue(out, off + out->header_words, word) != 0)
         return -1;
 #else
     if (out->object_mode && reloc) {
@@ -6570,9 +6606,7 @@ static int output_emit(struct das_output *out, unsigned int off,
     out->word_pos++;
 #endif
     if (reloc) {
-#ifndef DAS_NATIVE
         if (!out->object_mode)
-#endif
             das_bitmap_set(out->relmap, off);
     }
     return 0;
@@ -6586,7 +6620,7 @@ static int output_read_word(struct das_output *out, unsigned int off,
     unsigned int pos;
     unsigned int index;
 
-    pos = off + 2U;
+    pos = off + out->header_words;
     if (out->buffer_count == 0U || pos < out->buffer_first ||
         pos >= out->buffer_first + out->buffer_count)
         return -1;
@@ -6627,7 +6661,7 @@ static int output_replace_word(struct das_output *out, unsigned int off,
     unsigned int pos;
     unsigned int index;
 
-    pos = off + 2U;
+    pos = off + out->header_words;
     if (out->buffer_count == 0U || pos < out->buffer_first ||
         pos >= out->buffer_first + out->buffer_count)
         return -1;
@@ -6671,7 +6705,7 @@ static int output_reopcode(struct das_output *out, unsigned int off,
     unsigned int pos;
     unsigned int index;
 
-    pos = off + 2U;
+    pos = off + out->header_words;
     if (out->buffer_count == 0U || pos < out->buffer_first ||
         pos >= out->buffer_first + out->buffer_count)
         return -1;
@@ -6715,6 +6749,132 @@ static int output_emit_zeros(struct das_output *out, unsigned int off,
     return 0;
 }
 
+
+#if defined(DAS_NATIVE) && !defined(DAS_NATIVE_PHASE1_ONLY)
+/* DOBJ1 native output uses the same five-word format as host DAS.  Symbol
+ * definitions are streamed in stable global-index order from symbol spill,
+ * followed by relocation triples from the separate relocation scratch. */
+static das_word_t native_obj_magic(void)
+{
+    static const char text[] = "DOBJ1 ";
+    das_word_t word;
+    unsigned int i;
+
+    word = DAS_W(0);
+    for (i = 0U; i < 6U; ++i)
+        word = (word << 6U) |
+            (das_word_t)(((unsigned int)text[i] - 040U) & 077U);
+    return word & DAS_WORD_MASK;
+}
+
+static int output_begin_object(struct das_output *out, FILE *file,
+                               struct asmctx *c, unsigned int image_words)
+{
+    das_word_t header[5];
+
+    memset(out, 0, sizeof(*out));
+    memset(header, 0, sizeof(header));
+    out->file = file;
+    out->ctx = c;
+    out->object_mode = 1;
+    out->header_words = 5U;
+    out->image_words = image_words;
+    out->buffer = das_native_output_buffer;
+    if (write_words_host(file, header, 5U) != 0)
+        return -1;
+    out->word_pos = 5U;
+    return 0;
+}
+
+static int output_finish_object(struct das_output *out)
+{
+    struct asmctx *c;
+    das_word_t header[5];
+    das_word_t record[DAS_SYM_RECORD_WORDS];
+    das_word_t name_words[DAS_SYM_NAME_WORDS];
+    struct sym marker;
+    struct sym definition;
+    das_word_t symbol_head;
+    das_word_t value;
+    unsigned int i;
+    unsigned int count;
+    unsigned int len;
+    unsigned int nwords;
+    unsigned int copied;
+    unsigned int chunk;
+    int kind;
+    int sec;
+
+    c = out->ctx;
+    if (output_flush(out) != 0 ||
+        output_seek_raw(out, out->header_words + out->image_words) != 0)
+        return -1;
+    count = 0U;
+    for (i = 0U; i < c->sym_store.records; ++i) {
+        if (wordfile_read(&c->sym_store.spill,
+                i * DAS_SYM_RECORD_WORDS, record,
+                DAS_SYM_RECORD_WORDS) != 0)
+            return -1;
+        if (((record[2] >> 18U) & DAS_W(037)) != DAS_SYM_KIND_VIS)
+            continue;
+        sym_record_unpack(record, &marker);
+        if (record[1] != native_obj_hash(marker.name))
+            continue;
+        count++;
+        if ((unsigned int)marker.off != count ||
+            count > c->obj_global_count)
+            return -1;
+        if (find_sym(c, marker.name, &definition)) {
+            kind = 1;
+            sec = definition.sec & DAS_SYM_SEC_MASK;
+            if (sec == DAS_SEC_REL)
+                sec = DAS_SEC_ABS;
+            value = definition.off;
+        } else {
+            kind = 2;
+            sec = DAS_SEC_ABS;
+            value = DAS_W(0);
+        }
+        len = (unsigned int)strlen(marker.name);
+        nwords = (len + 3U) / 4U;
+        symbol_head = DAS_WORD(((unsigned int)kind << 15U) |
+            ((unsigned int)sec << 12U) | (len & 077U), 0U);
+        pack_text_words(name_words, nwords, marker.name, len);
+        if (write_words_host(out->file, &symbol_head, 1U) != 0 ||
+            write_words_host(out->file, &value, 1U) != 0 ||
+            write_words_host(out->file, name_words, nwords) != 0)
+            return -1;
+        out->word_pos += 2U + nwords;
+    }
+    if (count != c->obj_global_count)
+        return -1;
+
+    copied = 0U;
+    while (copied < c->obj_reloc_spill.words) {
+        chunk = c->obj_reloc_spill.words - copied;
+        if (chunk > DAS_OUTPUT_BUFFER_WORDS)
+            chunk = DAS_OUTPUT_BUFFER_WORDS;
+        if (wordfile_read(&c->obj_reloc_spill, copied,
+                das_native_output_buffer, chunk) != 0 ||
+            write_words_host(out->file, das_native_output_buffer,
+                chunk) != 0)
+            return -1;
+        out->word_pos += chunk;
+        copied += chunk;
+    }
+    if (c->obj_reloc_spill.words != c->obj_reloc_count * 3U)
+        return -1;
+    header[0] = native_obj_magic();
+    header[1] = DAS_WORD(text_total(c), c->loc[DAS_SEC_DATA]);
+    header[2] = DAS_WORD(c->loc[DAS_SEC_BSS], c->obj_global_count);
+    header[3] = DAS_WORD(c->obj_reloc_count, 0U);
+    header[4] = DAS_WORD(0U, c->obj_entry_symbol);
+    if (output_seek_raw(out, 0U) != 0 ||
+        write_words_host(out->file, header, 5U) != 0)
+        return -1;
+    return fflush(out->file) == 0 ? 0 : -1;
+}
+#endif
 
 #if !defined(DAS_NATIVE) && !defined(DAS_PHASE2_PROGRAM)
 static das_word_t dobj_magic_word(const char *text)
@@ -6861,9 +7021,9 @@ static int output_begin(struct das_output *out, FILE *file,
 
     memset(out, 0, sizeof(*out));
     out->file = file;
-#ifndef DAS_NATIVE
+    out->ctx = 0;
+    out->object_mode = 0;
     out->header_words = 2U;
-#endif
     out->relmap = relmap;
     out->relmap_words = relmap_words;
     out->image_words = image_words;
@@ -7113,53 +7273,37 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
         das_word_t rh;
         int r1;
         int r2;
-#ifndef DAS_NATIVE
         int lk;
         int ls;
         unsigned int lsy;
         das_word_t la;
-#endif
 
         d = strstr(q, ",,");
-#ifndef DAS_NATIVE
         lk = 0;
         ls = DAS_SEC_ABS;
         lsy = 0U;
         la = 0;
-#endif
         *d = 0;
         d += 2;
         if (eval_expr_radix(c, q, dot, default_base, &lh, &r1))
             return -1;
-#ifndef DAS_NATIVE
         if (r1) {
             lk = c->eval_reloc_kind;
             ls = c->eval_target_sec;
             lsy = c->eval_symbol;
             la = c->eval_addend;
         }
-#endif
         if (eval_expr_radix(c, d, dot, default_base, &rh, &r2))
             return -1;
-#ifndef DAS_NATIVE
         if (r1 && !c->object_mode) {
-            fprintf(stderr,
-                    "das: left-half relocation is unsupported in DXR V1: %s\n",
-                    q);
+            fprintf(stderr, DAS_DIAG("das: left relocation\n",
+                    "das: left-half relocation is unsupported in DXR V1: %s\n"), q);
             return -1;
         }
-#else
-        if (r1) {
-            fprintf(stderr, "das: left-half relocation is unsupported\n");
-            return -1;
-        }
-#endif
-#ifndef DAS_NATIVE
         c->eval_lh_reloc_kind = lk;
         c->eval_lh_target_sec = ls;
         c->eval_lh_symbol = lsy;
         c->eval_lh_addend = la;
-#endif
         *w = DAS_WORD(lh, rh);
         *reloc = (r1 || r2) ? DAS_RELOC_ADDR18 : DAS_RELOC_NONE;
         return 0;
@@ -7171,12 +7315,10 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
          * sign-extension introduced by a negative RH18 addend.  A genuine
          * left-half constant (for example GCC byte-pointer metadata) belongs
          * to the containing word and must survive object assembly. */
-#ifndef DAS_NATIVE
         if (c->object_mode &&
             (((*w >> 18) & DAS_HALF_MASK) == DAS_HALF_MASK) &&
             ((*w & DAS_W(0400000)) != 0))
             *w &= (das_word_t)DAS_HALF_MASK;
-#endif
         if (q[0] == '.' && q[1] == 0) {
             fprintf(stderr, DAS_DIAG("das: full relocation: %s\n",
                     "das: full-word relocation is unsupported in DXR V1: %s\n"), q);
@@ -10801,26 +10943,6 @@ static int assemble_phase1_file(const char *infile, const char *outfile,
 
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 #if defined(DAS_NATIVE) || defined(DAS_PHASE2_PROGRAM)
-#ifdef DAS_NATIVE
-/* Native fprintf accepts a diagnostic code, not a C format string.
- * Report the validated object metadata in fixed-width octal using
- * existing console syscalls.  GddddddEdddddd is easily checked by
- * the regression and uses no additional resident data buffer. */
-static void native_obj_metadata_report(unsigned int count, unsigned int entry)
-{
-    int shift;
-
-    (void)dsys_writechar(DSYS_STDERR, 'G');
-    for (shift = 15; shift >= 0; shift -= 3)
-        (void)dsys_writechar(DSYS_STDERR,
-            (int)('0' + ((count >> shift) & 07U)));
-    (void)dsys_writechar(DSYS_STDERR, 'E');
-    for (shift = 15; shift >= 0; shift -= 3)
-        (void)dsys_writechar(DSYS_STDERR,
-            (int)('0' + ((entry >> shift) & 07U)));
-    (void)dsys_writechar(DSYS_STDERR, '\n');
-}
-#endif
 static int assemble_phase2_stream(FILE *f, const char *outfile)
 {
     FILE *o;
@@ -10863,13 +10985,20 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
     }
 #ifdef DAS_NATIVE
     if (c->object_mode) {
-        /* The 1-based global indices and entry have survived DASIR2.
-         * Do not write a DXR mislabeled as DOBJ before the relocation
-         * writer is accepted. */
-        native_obj_metadata_report(c->obj_global_count,
-            c->obj_entry_symbol);
-        store_close(c);
-        return 1;
+        if (scratch_open(&c->obj_reloc_spill, outfile, ".DOR") != 0) {
+            store_close(c);
+            return 1;
+        }
+#if DAS_ENABLE_OPTIMIZER
+        /* Object-mode peepholes need relocation-aware record rewrites;
+         * never silently use the DXR bitmap optimizer on DOBJ output. */
+        if (das_optimize) {
+            fprintf(stderr, DAS_DIAG("das2: obj optimizer\n",
+                "das2: DOBJ relocation-aware optimization is unfinished\n"));
+            store_close(c);
+            return 1;
+        }
+#endif
     }
 #endif
     image_words = text_total(c) + c->loc[DAS_SEC_DATA];
@@ -10877,10 +11006,11 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
     c->relmap_words = reloc_words;
     das_note_work(c, reloc_words);
 #ifdef DAS_NATIVE
-    if (reloc_words > DAS_NATIVE_RELMAP_WORDS)
+    if (!c->object_mode && reloc_words > DAS_NATIVE_RELMAP_WORDS)
         die("native relocation bitmap too large");
-    relmap = das_native_relmap;
-    memset(relmap, 0, reloc_words * sizeof(*relmap));
+    relmap = c->object_mode ? 0 : das_native_relmap;
+    if (!c->object_mode)
+        memset(relmap, 0, reloc_words * sizeof(*relmap));
 #else
     relmap = 0;
     if (reloc_words != 0U) {
@@ -10898,8 +11028,11 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
         store_close(c);
         return 1;
     }
-    rc = output_begin(&output, o, c->entry, image_words,
-        c->loc[DAS_SEC_BSS], relmap, reloc_words);
+    if (c->object_mode)
+        rc = output_begin_object(&output, o, c, image_words);
+    else
+        rc = output_begin(&output, o, c->entry, image_words,
+            c->loc[DAS_SEC_BSS], relmap, reloc_words);
     if (rc != 0) {
         perror(outfile);
         fclose(o);
@@ -10935,7 +11068,10 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
         rc = 1;
     }
     if (rc == 0) {
-        rc = output_finish(&output);
+        if (c->object_mode)
+            rc = output_finish_object(&output);
+        else
+            rc = output_finish(&output);
         if (rc != 0)
             perror(outfile);
     }
