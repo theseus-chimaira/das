@@ -1246,8 +1246,8 @@ struct asmctx {
     unsigned int opt_current_may_be_skipped;
 #endif
     char entry_name[DAS_MAX_NAME + 1];
-#ifndef DAS_NATIVE
     int object_mode;
+#ifndef DAS_NATIVE
     struct das_obj_global *obj_globals;
     unsigned int obj_global_count;
     unsigned int obj_global_cap;
@@ -1308,7 +1308,7 @@ static unsigned int sec_base(struct asmctx *c, int sec);
 #if DAS_ENABLE_OPTIMIZER
 static int das_optimize;
 #endif
-#if !defined(DAS_NATIVE) && !defined(DAS_PHASE2_PROGRAM)
+#if !defined(DAS_PHASE2_PROGRAM) && !defined(DAS_NATIVE_PHASE2_ONLY)
 static int das_object_mode;
 #endif
 
@@ -1339,6 +1339,7 @@ static int das_object_mode;
 #define DAS_PHASE_F_OPTIMIZE 000001U
 #define DAS_PHASE_F_STRICT_BASE 000002U
 #define DAS_PHASE_F_KERNEL 000004U
+#define DAS_PHASE_F_OBJECT 000010U
 #define DAS_REPT_PACK_WORDS \
     ((DAS_MAX_LINE - 1U + DAS_TARGET_CHARS_PER_WORD - 1U) / \
         DAS_TARGET_CHARS_PER_WORD)
@@ -8127,6 +8128,8 @@ static int phase_export_stream(struct asmctx *c, FILE *out)
         flags |= DAS_PHASE_F_STRICT_BASE;
     if (das_kernel_mode)
         flags |= DAS_PHASE_F_KERNEL;
+    if (c->object_mode)
+        flags |= DAS_PHASE_F_OBJECT;
     state[0] = (das_word_t)flags;
     state[1] = (das_word_t)c->entry;
     state[2] = (das_word_t)c->loc[DAS_SEC_ABS];
@@ -8233,6 +8236,7 @@ static int phase_import_state(struct asmctx *c, struct host_word_input *in,
 #endif
     das_strict_base = (flags & DAS_PHASE_F_STRICT_BASE) != 0U;
     das_kernel_mode = (flags & DAS_PHASE_F_KERNEL) != 0U;
+    c->object_mode = (flags & DAS_PHASE_F_OBJECT) != 0U;
     c->entry = (unsigned int)state[1];
     c->loc[DAS_SEC_ABS] = (unsigned int)state[2];
     c->loc[DAS_SEC_TEXT] = (unsigned int)state[3];
@@ -10647,6 +10651,7 @@ static int assemble_phase1_stream(const char *infile, const char *outfile,
     c = &local_ctx;
 #endif
     memset(c, 0, sizeof(*c));
+    c->object_mode = das_object_mode;
     if (store_init(c, outfile) != 0)
         die("cannot create scratch files");
     if (ir_store_begin(c) != 0) {
@@ -10684,12 +10689,18 @@ static int assemble_phase1_stream(const char *infile, const char *outfile,
     if (image_words == 0U && c->loc[DAS_SEC_BSS] == 0U)
         die("empty image");
 #endif
-    if (image_words != 0U && c->entry >= image_words)
+    if (!c->object_mode && image_words != 0U && c->entry >= image_words)
         die("entry outside image");
     reloc_words = (image_words + 35U) / 36U;
     c->relmap_words = reloc_words;
     das_note_work(c, reloc_words);
 #ifdef DAS_NATIVE
+    if (c->object_mode) {
+        fprintf(stderr, DAS_DIAG("das: obj unsupported\n",
+            "das: native DOBJ1 writer not yet implemented\n"));
+        store_close(c);
+        return 1;
+    }
     if (image_words > EXEC_DXR_MAX_IMAGE_WORDS ||
         c->loc[DAS_SEC_BSS] > EXEC_DXR_MAX_BSS_WORDS ||
         image_words + c->loc[DAS_SEC_BSS] +
@@ -11477,6 +11488,8 @@ int das_native_main(int argc, kword_t **argv)
 #if DAS_ENABLE_OPTIMIZER
             das_optimize = 1;
 #endif
+        } else if (strcmp(argtext, "-C") == 0) {
+            das_object_mode = 1;
         } else if (strcmp(argtext, "-S") == 0) {
             input_format = DAS_INPUT_S6REC;
         } else if (strcmp(argtext, "-A") == 0) {
