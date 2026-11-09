@@ -1247,9 +1247,10 @@ struct asmctx {
 #endif
     char entry_name[DAS_MAX_NAME + 1];
     int object_mode;
+    unsigned int obj_global_count;
+    unsigned int obj_entry_symbol;
 #ifndef DAS_NATIVE
     struct das_obj_global *obj_globals;
-    unsigned int obj_global_count;
     unsigned int obj_global_cap;
     struct das_obj_reloc *obj_relocs;
     unsigned int obj_reloc_count;
@@ -1335,7 +1336,7 @@ static int das_object_mode;
 #define DAS_PHASE_LITERALS 6U
 #define DAS_PHASE_LINES 7U
 #define DAS_PHASE_END 8U
-#define DAS_PHASE_STATE_WORDS 14U
+#define DAS_PHASE_STATE_WORDS 16U
 #define DAS_PHASE_F_OPTIMIZE 000001U
 #define DAS_PHASE_F_STRICT_BASE 000002U
 #define DAS_PHASE_F_KERNEL 000004U
@@ -2510,6 +2511,106 @@ static int symbol_visible_here(struct asmctx *c, const char *name)
         return 0;
     return (unsigned int)(marker.off & DAS_HALF_MASK) <= c->source_serial;
 }
+#endif
+
+#ifdef DAS_NATIVE
+/* Native global declarations use spill-backed symbol records.  The
+ * distinct hash domain makes a stable 1-based DOBJ symbol index without
+ * retaining a name array in resident memory. */
+static das_word_t native_obj_hash(const char *name)
+{
+    return das_mask36(sym_hash(name) ^ DAS_W(0363636363636));
+}
+
+static unsigned int native_obj_find(struct asmctx *c, const char *name)
+{
+    struct das_sym_store *store;
+    das_word_t record[DAS_SYM_RECORD_WORDS];
+    das_word_t hash;
+    unsigned int bucket;
+    unsigned int ref;
+    struct sym found;
+
+    store = &c->sym_store;
+    hash = native_obj_hash(name);
+    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
+    ref = store->heads[bucket];
+    while (ref != 0U) {
+        if (wordfile_read(&store->spill,
+                (ref - 1U) * DAS_SYM_RECORD_WORDS,
+                record, DAS_SYM_RECORD_WORDS) != 0)
+            die("object global scratch read failed");
+        if (record[1] == hash) {
+            sym_record_unpack(record, &found);
+            if (strcmp(found.name, name) == 0 &&
+                (found.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_VIS)
+                return (unsigned int)found.off;
+        }
+        ref = (unsigned int)(record[0] & DAS_HALF_MASK);
+    }
+    return 0U;
+}
+
+static unsigned int native_obj_add(struct asmctx *c, const char *name)
+{
+    struct das_sym_store *store;
+    das_word_t record[DAS_SYM_RECORD_WORDS];
+    das_word_t hash;
+    unsigned int bucket;
+    unsigned int next;
+    unsigned int found;
+
+    found = native_obj_find(c, name);
+    if (found != 0U)
+        return found;
+    if (strlen(name) > DAS_MAX_NAME ||
+        c->obj_global_count == DAS_HALF_MASK ||
+        c->sym_store.records == DAS_HALF_MASK)
+        die("too many object globals");
+    store = &c->sym_store;
+    hash = native_obj_hash(name);
+    bucket = (unsigned int)(hash & (DAS_SYM_BUCKETS - 1U));
+    next = c->obj_global_count + 1U;
+    sym_record_pack(record, store->heads[bucket], hash, name,
+        DAS_SEC_ABS | DAS_SYM_KIND_VIS, (das_word_t)next);
+    if (wordfile_append(&store->spill, record,
+            DAS_SYM_RECORD_WORDS) != 0)
+        die("object global scratch write failed");
+    store->heads[bucket] = ++store->records;
+    c->obj_global_count = next;
+    return next;
+}
+
+#if !defined(DAS_NATIVE_PHASE2_ONLY)
+static int native_obj_global_list(struct asmctx *c, const char *rest)
+{
+    const char *p;
+    char name[DAS_MAX_NAME + 1];
+    unsigned int n;
+
+    p = rest;
+    for (;;) {
+        while (*p != 0 && (isspace((unsigned char)*p) || *p == ','))
+            p++;
+        if (*p == 0)
+            return 0;
+        if (!isname0((unsigned char)*p))
+            return -1;
+        n = 0U;
+        while (isname((unsigned char)*p)) {
+            if (n >= DAS_MAX_NAME)
+                return -1;
+            name[n++] = *p++;
+        }
+        name[n] = 0;
+        (void)native_obj_add(c, name);
+        while (*p != 0 && isspace((unsigned char)*p))
+            p++;
+        if (*p != 0 && *p != ',')
+            return -1;
+    }
+}
+#endif
 #endif
 
 #ifndef DAS_NATIVE
@@ -5973,6 +6074,9 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
 #ifndef DAS_NATIVE
         if (c->object_mode && c->entry_name[0] != 0)
             (void)obj_global_add(c, c->entry_name);
+#else
+        if (c->object_mode && c->entry_name[0] != 0)
+            c->obj_entry_symbol = native_obj_add(c, c->entry_name);
 #endif
         return 0;
     case DAS_TOK_GLOBAL:
@@ -5981,6 +6085,14 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         if (c->object_mode && obj_parse_global_list(c, parsed.rest) != 0) {
             fprintf(stderr, "das: malformed global symbol list: %s\n",
                     parsed.rest);
+            return 1;
+        }
+#else
+        if (c->object_mode &&
+            native_obj_global_list(c, parsed.rest) != 0) {
+            fprintf(stderr, DAS_DIAG("das: bad global\n",
+                "das: malformed global symbol list: %s\n"),
+                parsed.rest);
             return 1;
         }
 #endif
@@ -6041,6 +6153,9 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
 #ifndef DAS_NATIVE
         if (c->object_mode && parsed.token == DAS_TOK_COMM)
             (void)obj_global_add(c, name);
+#else
+        if (c->object_mode && parsed.token == DAS_TOK_COMM)
+            (void)native_obj_add(c, name);
 #endif
         c->loc[DAS_SEC_BSS] += words;
         return 0;
@@ -8144,6 +8259,8 @@ static int phase_export_stream(struct asmctx *c, FILE *out)
     state[11] = (das_word_t)c->parser_classifications;
     state[12] = (das_word_t)c->parser_token_probes;
     state[13] = DAS_WORD(c->sym_store.lookups, c->sym_store.probes);
+    state[14] = (das_word_t)c->obj_global_count;
+    state[15] = (das_word_t)c->obj_entry_symbol;
     magic = DAS_PHASE_MAGIC;
     header = phase_header(DAS_PHASE_STATE, DAS_PHASE_STATE_WORDS);
     rc = phase_write_words(out, &magic, 1U) != 0 ||
@@ -8218,9 +8335,14 @@ static int phase_import_state(struct asmctx *c, struct host_word_input *in,
     unsigned int chunk;
     unsigned int bucket;
     unsigned int ref;
+#ifdef DAS_NATIVE
+    struct sym marker;
+    unsigned int globals_seen;
+#endif
 
 #ifdef DAS_NATIVE
     buffer = das_native_output_buffer;
+    globals_seen = 0U;
 #endif
     if (phase_get_word(in, &magic) != 0 || magic != DAS_PHASE_MAGIC ||
         phase_get_header(in, DAS_PHASE_STATE, &count) != 0 ||
@@ -8251,6 +8373,11 @@ static int phase_import_state(struct asmctx *c, struct host_word_input *in,
     c->sym_store.lookups = (unsigned int)((state[13] >> 18U) &
         DAS_HALF_MASK);
     c->sym_store.probes = (unsigned int)(state[13] & DAS_HALF_MASK);
+    c->obj_global_count = (unsigned int)state[14];
+    c->obj_entry_symbol = (unsigned int)state[15];
+    if (c->obj_global_count > DAS_HALF_MASK ||
+        c->obj_entry_symbol > c->obj_global_count)
+        return -1;
     if (phase_get_header(in, DAS_PHASE_SYMBOLS, &count) != 0 ||
         count != (unsigned int)state[6])
         return -1;
@@ -8267,8 +8394,25 @@ static int phase_import_state(struct asmctx *c, struct host_word_input *in,
                 DAS_SYM_RECORD_WORDS) != 0)
             return -1;
         c->sym_store.heads[bucket] = ref;
+#ifdef DAS_NATIVE
+        /* Verify every serialized global marker and its original ID.
+         * A truncated or reordered symbol table must never be used to
+         * construct an object with incorrect relocation targets. */
+        if (((record[2] >> 18U) & DAS_W(037)) == DAS_SYM_KIND_VIS) {
+            sym_record_unpack(record, &marker);
+            if (record[1] == native_obj_hash(marker.name)) {
+                globals_seen++;
+                if ((unsigned int)marker.off != globals_seen)
+                    return -1;
+            }
+        }
+#endif
     }
     c->sym_store.records = count;
+#ifdef DAS_NATIVE
+    if (globals_seen != c->obj_global_count)
+        return -1;
+#endif
     if (phase_get_header(in, DAS_PHASE_LITERALS, &count) != 0 ||
         count != c->lit_store.words)
         return -1;
@@ -10695,12 +10839,6 @@ static int assemble_phase1_stream(const char *infile, const char *outfile,
     c->relmap_words = reloc_words;
     das_note_work(c, reloc_words);
 #ifdef DAS_NATIVE
-    if (c->object_mode) {
-        fprintf(stderr, DAS_DIAG("das: obj unsupported\n",
-            "das: native DOBJ1 writer not yet implemented\n"));
-        store_close(c);
-        return 1;
-    }
     if (image_words > EXEC_DXR_MAX_IMAGE_WORDS ||
         c->loc[DAS_SEC_BSS] > EXEC_DXR_MAX_BSS_WORDS ||
         image_words + c->loc[DAS_SEC_BSS] +
@@ -10742,6 +10880,26 @@ static int assemble_phase1_file(const char *infile, const char *outfile,
 
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 #if defined(DAS_NATIVE) || defined(DAS_PHASE2_PROGRAM)
+#ifdef DAS_NATIVE
+/* Native fprintf accepts a diagnostic code, not a C format string.
+ * Report the validated object metadata in fixed-width octal using
+ * existing console syscalls.  GddddddEdddddd is easily checked by
+ * the regression and uses no additional resident data buffer. */
+static void native_obj_metadata_report(unsigned int count, unsigned int entry)
+{
+    int shift;
+
+    (void)dsys_writechar(DSYS_STDERR, 'G');
+    for (shift = 15; shift >= 0; shift -= 3)
+        (void)dsys_writechar(DSYS_STDERR,
+            (int)('0' + ((count >> shift) & 07U)));
+    (void)dsys_writechar(DSYS_STDERR, 'E');
+    for (shift = 15; shift >= 0; shift -= 3)
+        (void)dsys_writechar(DSYS_STDERR,
+            (int)('0' + ((entry >> shift) & 07U)));
+    (void)dsys_writechar(DSYS_STDERR, '\n');
+}
+#endif
 static int assemble_phase2_stream(FILE *f, const char *outfile)
 {
     FILE *o;
@@ -10782,6 +10940,17 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
         store_close(c);
         return 1;
     }
+#ifdef DAS_NATIVE
+    if (c->object_mode) {
+        /* The 1-based global indices and entry have survived DASIR2.
+         * Do not write a DXR mislabeled as DOBJ before the relocation
+         * writer is accepted. */
+        native_obj_metadata_report(c->obj_global_count,
+            c->obj_entry_symbol);
+        store_close(c);
+        return 1;
+    }
+#endif
     image_words = text_total(c) + c->loc[DAS_SEC_DATA];
     reloc_words = (image_words + 35U) / 36U;
     c->relmap_words = reloc_words;
