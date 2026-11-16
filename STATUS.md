@@ -1,5 +1,27 @@
 # DAS current status
 
+## 2026-11-16: Native comment-scanner size investigation
+
+The current KCC PDP-6 `-O` build originally emitted 94 instructions for
+`das_strip_c_comments`, failing the independent testkit's 68-instruction
+limit. The source scanner now has one character-output path, one input
+pointer, and signed quote/escape state instead of duplicate byte stores and
+an escape flag. The measured function shrank to **72 instructions** (22
+fewer); `das_read_line` remains at 133 against its 136-instruction limit.
+These are function instruction counts, not native image-size measurements.
+
+The independent testkit's host DAS suites pass with the source change:
+eight fast and two full registered tests. Its input-reader fixtures now
+initialize `cstate`, and its comment-reader tests exercise escaped quotes,
+consecutive comments, and multiline transitions. The original and updated
+source both pass the expanded comment-reader oracle.
+
+**Native acceptance is still OPEN.** The existing 68-instruction limit has
+not been raised or bypassed. A clean build of the full resident DAS
+driver/phase chain and a current native guest execution PASS have not yet
+been established for this revision. Earlier image-size and guest-acceptance
+measurements below are historical, not fresh acceptance evidence.
+
 ## Build
 
 The current source builds cleanly with the normal "MAKE" target using C99. The development build produces:

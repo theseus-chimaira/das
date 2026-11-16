@@ -97,7 +97,6 @@ struct das_char_reader {
 };
 
 #define DAS_CSTATE_COMMENT 01U
-#define DAS_QUOTE_ESCAPE 0200U
 
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
 /* Strip GAS C-style comments in-place.  Only the multi-line comment bit is
@@ -105,44 +104,36 @@ struct das_char_reader {
  */
 static void das_strip_c_comments(char *line, unsigned int *state)
 {
-    char *src;
     char *dst;
-    unsigned int quote;
+    int quote;
 
-    src = line;
     dst = line;
-    quote = 0U;
-    while (*src != 0) {
+    quote = 0;
+    for (;;) {
         unsigned int ch;
-
-        ch = (unsigned int)(unsigned char)*src++;
-        if ((*state & DAS_CSTATE_COMMENT) != 0U) {
-            if (ch == '*' && *src == '/') {
-                *state &= ~DAS_CSTATE_COMMENT;
-                src++;
+        ch = (unsigned int)(unsigned char)*line++;
+        if (ch == 0U)
+            break;
+        if (*state != 0U) {
+            if (ch == '*' && *line == '/') {
+                *state = 0U;
+                ++line;
             }
             continue;
         }
-        if (quote != 0U) {
-            *dst++ = (char)ch;
-            if ((quote & DAS_QUOTE_ESCAPE) != 0U)
-                quote &= 0177U;
-            else if (ch == '\\')
-                quote |= DAS_QUOTE_ESCAPE;
-            else if (ch == (quote & 0177U))
-                quote = 0U;
-            continue;
-        }
-        if (ch == '\'' || ch == '"') {
-            quote = ch;
-            *dst++ = (char)ch;
-            continue;
-        }
-        if (ch == '/' && *src == '*') {
-            *dst++ = ' ';
-            *state |= DAS_CSTATE_COMMENT;
-            src++;
-            continue;
+        if (quote != 0) {
+            /* Negative quote means one character is escaped. Negation
+             * toggles escape state without another flag or byte load. */
+            if (quote < 0 || ch == '\\')
+                quote = -quote;
+            else if (ch == (unsigned int)quote)
+                quote = 0;
+        } else if (ch == '/' && *line == '*') {
+            ch = ' ';
+            *state = DAS_CSTATE_COMMENT;
+            ++line;
+        } else if (ch == '\'' || ch == '"') {
+            quote = (int)ch;
         }
         *dst++ = (char)ch;
     }

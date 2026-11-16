@@ -1,5 +1,15 @@
 # DAS TODO
 
+## 0. Restore the native comment-scanner code-size gate
+
+The PDP-6 KCC `-O` comment scanner is now 72 instructions, down from 94,
+but still exceeds the strict 68-instruction testkit limit. Complete a
+semantically equivalent reduction without changing the limit or creating
+out-of-bounds byte pointers. Preserve the current host comment-reader,
+input-format, and streaming tests; then rerun full native phase-image,
+resident-budget, and DAIMOS guest acceptance. Do not claim the historical
+native PASS for a new build until those checks actually run.
+
 ## 1. Extend DAIMOS-resident regression coverage
 
 The public DAS -> DAS1 -> DAS2 file-based phase chain now builds and runs under
