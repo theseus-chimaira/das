@@ -1,14 +1,16 @@
 # DAS TODO
 
-## 0. Restore the native comment-scanner code-size gate
+## 0. Complete the native DAIMOS guest acceptance
 
-The PDP-6 KCC `-O` comment scanner is now 72 instructions, down from 94,
-but still exceeds the strict 68-instruction testkit limit. Complete a
-semantically equivalent reduction without changing the limit or creating
-out-of-bounds byte pointers. Preserve the current host comment-reader,
-input-format, and streaming tests; then rerun full native phase-image,
-resident-budget, and DAIMOS guest acceptance. Do not claim the historical
-native PASS for a new build until those checks actually run.
+The strict 68-instruction comment scanner, DAS1/DAS2 phase-image limits,
+and native 64-word scratch-backed relocation bitmap contract all pass.
+The full guest currently fails its independent `/TEMP` file-creation
+preflight even though `/TEMP` is mode `01777` and the input exists.
+Investigate the actual boot mount mode and D6FS write-service availability;
+do not alter the size limits or weaken the guest contract. Once the
+guest can create temporary files, execute DAS1, DAS2, validate the output
+DXR word-for-word, and run the assembled program. Re-run native acceptance
+before marking this item complete.
 
 ## 1. Extend DAIMOS-resident regression coverage
 

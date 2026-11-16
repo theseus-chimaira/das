@@ -116,7 +116,7 @@ static void das_strip_c_comments(char *line, unsigned int *state)
             break;
         if (*state != 0U) {
             if (ch == '*' && *line == '/') {
-                *state = 0U;
+                --*state;
                 ++line;
             }
             continue;
@@ -127,10 +127,13 @@ static void das_strip_c_comments(char *line, unsigned int *state)
             if (quote < 0 || ch == '\\')
                 quote = -quote;
             else if (ch == (unsigned int)quote)
-                quote = 0;
+                /* Equal positive operands XOR to zero. KCC can emit one
+                 * conditional memory XOR instead of a register clear and
+                 * a separate stack store. */
+                quote ^= (int)ch;
         } else if (ch == '/' && *line == '*') {
             ch = ' ';
-            *state = DAS_CSTATE_COMMENT;
+            ++*state;
             ++line;
         } else if (ch == '\'' || ch == '"') {
             quote = (int)ch;
@@ -1130,6 +1133,9 @@ struct asmctx {
     struct das_lit_store lit_store;
     struct das_wordfile rept_spill;
     struct das_wordfile ir_spill;
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+    struct das_wordfile relmap_spill;
+#endif
     unsigned int loc[4];
     unsigned int entry;
     unsigned int relmap_words;
@@ -1203,6 +1209,9 @@ struct das_output {
 #endif
     das_word_t *relmap;
     unsigned int relmap_words;
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+    struct das_wordfile *relmap_spill;
+#endif
     unsigned int image_words;
     unsigned int word_pos;
 #ifdef DAS_NATIVE
@@ -1267,8 +1276,6 @@ static int das_object_mode;
     ((DAS_MAX_LINE - 1U + DAS_TARGET_CHARS_PER_WORD - 1U) / \
         DAS_TARGET_CHARS_PER_WORD)
 #ifdef DAS_NATIVE
-#define DAS_NATIVE_RELMAP_WORDS \
-    ((EXEC_DXR_MAX_IMAGE_WORDS + 35U) / 36U)
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
 static char das_native_file_paths[DAS_MAX_INCLUDE_DEPTH + 1U]
     [KPATH_MAX_CHARS + 1U];
@@ -1279,7 +1286,6 @@ static das_word_t das_native_rept_record[1U + DAS_REPT_PACK_WORDS];
 static char das_native_line[DAS_MAX_LINE];
 static char das_native_tmp[DAS_MAX_LINE];
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
-static das_word_t das_native_relmap[DAS_NATIVE_RELMAP_WORDS];
 static das_word_t das_native_output_buffer[DAS_OUTPUT_BUFFER_WORDS];
 static das_word_t das_native_phase_input[DAS_WORD_INPUT_BUFFER];
 /* DASIR2 line payloads must not share the output queue.  pass2_line() may
@@ -2165,6 +2171,13 @@ static int store_init_phase2(struct asmctx *c, const char *scratch_base)
 
 static void store_close(struct asmctx *c)
 {
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+    if (c->relmap_spill.file != 0) {
+        fclose(c->relmap_spill.file);
+        c->relmap_spill.file = 0;
+        (void)remove(c->relmap_spill.path);
+    }
+#endif
     if (c->sym_store.spill.file != 0) {
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
@@ -6432,10 +6445,25 @@ static int output_emit(struct das_output *out, unsigned int off,
     out->word_pos++;
 #endif
     if (reloc) {
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+        unsigned int index;
+        das_word_t bits;
+
+        /* Relocation bits live in a bounded scratch wordfile. They may
+         * arrive out of order (literals follow the initial text pass). */
+        index = off / 36U;
+        if (wordfile_read(out->relmap_spill, index, &bits, 1U) != 0)
+            return -1;
+        bits |= DAS_W(1) << (35U - (off % 36U));
+        if (wordfile_seek(out->relmap_spill, index) != 0 ||
+            wordfile_write(out->relmap_spill, &bits, 1U) != 0)
+            return -1;
+#else
 #ifndef DAS_NATIVE
         if (!out->object_mode)
 #endif
             das_bitmap_set(out->relmap, off);
+#endif
     }
     return 0;
 }
@@ -6740,6 +6768,31 @@ static int output_begin(struct das_output *out, FILE *file,
     return 0;
 }
 
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+static int output_begin_reloc_spill(struct das_output *out,
+                                    struct das_wordfile *wf)
+{
+    unsigned int left;
+
+    out->relmap_spill = wf;
+    /* The existing word-output queue is idle until pass 2 starts. Reuse it
+     * to initialize the complete bitmap without a resident-sized array. */
+    memset(das_native_output_buffer, 0,
+           sizeof(das_native_output_buffer));
+    left = out->relmap_words;
+    while (left != 0U) {
+        unsigned int chunk;
+
+        chunk = left > DAS_OUTPUT_BUFFER_WORDS ?
+            DAS_OUTPUT_BUFFER_WORDS : left;
+        if (wordfile_append(wf, das_native_output_buffer, chunk) != 0)
+            return -1;
+        left -= chunk;
+    }
+    return 0;
+}
+#endif
+
 static int output_finish(struct das_output *out)
 {
 #ifdef DAS_NATIVE
@@ -6748,9 +6801,30 @@ static int output_finish(struct das_output *out)
 #endif
     if (output_seek_raw(out, 2U + out->image_words) != 0)
         return -1;
+#if defined(DAS_NATIVE) && defined(DAS_NATIVE_PHASE2_ONLY)
+    {
+        unsigned int pos;
+
+        pos = 0U;
+        while (pos < out->relmap_words) {
+            unsigned int chunk;
+
+            chunk = out->relmap_words - pos;
+            if (chunk > DAS_OUTPUT_BUFFER_WORDS)
+                chunk = DAS_OUTPUT_BUFFER_WORDS;
+            if (wordfile_read(out->relmap_spill, pos,
+                    das_native_output_buffer, chunk) != 0 ||
+                write_words_host(out->file, das_native_output_buffer,
+                    chunk) != 0)
+                return -1;
+            pos += chunk;
+        }
+    }
+#else
     if (write_words_host(out->file, out->relmap,
             out->relmap_words) != 0)
         return -1;
+#endif
     out->word_pos += out->relmap_words;
     return fflush(out->file) == 0 ? 0 : -1;
 }
@@ -10660,12 +10734,18 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
     image_words = text_total(c) + c->loc[DAS_SEC_DATA];
     reloc_words = (image_words + 35U) / 36U;
     c->relmap_words = reloc_words;
-    das_note_work(c, reloc_words);
 #ifdef DAS_NATIVE
-    if (reloc_words > DAS_NATIVE_RELMAP_WORDS)
-        die("native relocation bitmap too large");
-    relmap = das_native_relmap;
-    memset(relmap, 0, reloc_words * sizeof(*relmap));
+    /* Native phase 2 stores relocation words on disk, not in work RAM. */
+    das_note_work(c, 0U);
+#else
+    das_note_work(c, reloc_words);
+#endif
+#ifdef DAS_NATIVE
+    relmap = 0;
+    if (scratch_open(&c->relmap_spill, outfile, ".DRM") != 0) {
+        store_close(c);
+        return 1;
+    }
 #else
     relmap = 0;
     if (reloc_words != 0U) {
@@ -10685,6 +10765,10 @@ static int assemble_phase2_stream(FILE *f, const char *outfile)
     }
     rc = output_begin(&output, o, c->entry, image_words,
         c->loc[DAS_SEC_BSS], relmap, reloc_words);
+#ifdef DAS_NATIVE
+    if (rc == 0)
+        rc = output_begin_reloc_spill(&output, &c->relmap_spill);
+#endif
     if (rc != 0) {
         perror(outfile);
         fclose(o);
@@ -10871,17 +10955,18 @@ static int assemble_file(const char *infile, const char *outfile,
 #endif
     reloc_words = (image_words + 35U) / 36U;
     c->relmap_words = reloc_words;
+#ifdef DAS_NATIVE
+    das_note_work(c, 0U);
+#else
     das_note_work(c, reloc_words);
+#endif
 #ifdef DAS_NATIVE
     if (image_words > EXEC_DXR_MAX_IMAGE_WORDS ||
         c->loc[DAS_SEC_BSS] > EXEC_DXR_MAX_BSS_WORDS ||
         image_words + c->loc[DAS_SEC_BSS] +
             EXEC_DXR_STACK_WORDS > 040000U)
         die("output exceeds native DXR process limit");
-    if (reloc_words > DAS_NATIVE_RELMAP_WORDS)
-        die("native relocation bitmap too large");
-    relmap = das_native_relmap;
-    memset(relmap, 0, reloc_words * sizeof(*relmap));
+    relmap = 0;
 #else
     relmap = 0;
     if (!c->object_mode && reloc_words != 0U) {

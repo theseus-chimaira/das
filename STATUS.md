@@ -1,5 +1,39 @@
 # DAS current status
 
+## 2026-11-16: Native size gate passes; guest scratch access pending
+
+The PDP-6 KCC `-O` comment reader now emits exactly **68 instructions**
+against the unchanged 68-instruction limit (originally 94). An exact
+matching quote delimiter clears quote state with one conditional XOR;
+comment entry and exit use one increment/decrement respectively.
+The `das_read_line` gate remains **133/136**.
+
+Native DAS2 now keeps its relocation bitmap in a bounded `.DRM` scratch
+wordfile. The old static array reserved 2,731 words in resident BSS to
+handle the complete `0300000`-word DXR image ceiling. The replacement
+uses the existing 64-word output buffer to initialize and append the
+bitmap, and performs random-access read-modify-write only when setting
+relocation bits. This preserves supported image sizes without a large
+resident bitmap. Native size/phase ownership checks pass:
+
+| Phase | Image (octal) | BSS (octal) | Process including stack (octal) |
+| --- | --- | --- | --- |
+| DAS1 | 033233 | 002032 | 037265 |
+| DAS2 | 027751 | 001523 | 033474 |
+
+All **nine fast and two full** independent DAS host suite entries pass.
+The new native relocation mock checks maximum bitmap size, separated
+relocation bits, late updates to earlier words and scratch I/O errors.
+The full DAS1/DAS2 native phase-chain verifier passes.
+
+**Full DAIMOS guest acceptance is still OPEN.** The guest-side preflight
+can stat `/TEMP` as mode `01777` and can stat `/TEMP/TEST.S`, but opening
+a new output/scratch file fails before running either DAS phase. This is
+an independent guest filesystem/mount issue, not a passing end-to-end
+native assembler test. Earlier historical guest-pass claims do not cover
+this current image.
+
+
 ## 2026-11-16: Native comment-scanner size investigation
 
 The current KCC PDP-6 `-O` build originally emitted 94 instructions for
