@@ -66,7 +66,7 @@ static int das_native_is_space(int c)
 
 static int das_native_is_alpha(int c)
 {
-    return c >= 'A' && c <= 'Z';
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
 }
 
 static int das_native_is_digit(int c)
