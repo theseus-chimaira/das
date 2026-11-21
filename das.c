@@ -1114,6 +1114,7 @@ enum das_token {
     DAS_TOK_DATA,
     DAS_TOK_BSS,
     DAS_TOK_PSECT,
+    DAS_TOK_DIRECTIVE,
     DAS_TOK_NO_WORDS,
     DAS_TOK_ENTRY,
     DAS_TOK_ERROR,
@@ -1637,6 +1638,7 @@ static enum das_token classify_token(struct asmctx *c, const char *key)
         {DAS_KEY6('C','O','M','M','O','N'), DAS_TOK_COMM},
         {DAS_KEY5('C','O','N','S','T'), DAS_TOK_DATA},
         {DAS_KEY4('D','A','T','A'), DAS_TOK_DATA},
+        {DAS_KEY6('D','I','R','E','C','T'), DAS_TOK_DIRECTIVE},
         {DAS_KEY3('E','N','D'), DAS_TOK_NO_WORDS},
         {DAS_KEY5('E','N','D','P','S'), DAS_TOK_NO_WORDS},
         {DAS_KEY5('E','N','T','R','Y'), DAS_TOK_ENTRY},
@@ -4133,6 +4135,29 @@ static int byte_begin(struct asmctx *c, char *p, unsigned int dot,
         p++;
     if (pref_i(p, "BYTE", 4))
         p = skipws(p + 4);
+    /* MACRO-10 permits BYTE (9)0,(9)1: the first field starts with
+     * a parenthesized bit size immediately followed by its value.
+     * The existing DAS form BYTE 9,0 remains supported below.
+     * In both forms the size is a positive absolute width <= 36.
+     * Parse the first size here because byte_size_prefix() only
+     * handles additional fields after byte_begin() has succeeded.
+     */
+    if (*p == '(') {
+        end = strchr(p + 1, ')');
+        if (end == 0)
+            return -1;
+        save = *end;
+        *end = 0;
+        if (eval_abs_u(c, p + 1, dot, DAS_W(36), &value) != 0 ||
+            value == 0U) {
+            *end = save;
+            return -1;
+        }
+        *end = save;
+        *size = (int)value;
+        *next = skipws(end + 1);
+        return 0;
+    }
     end = p;
     while (*end != 0 && *end != ',' && !isspace((unsigned char)*end))
         end++;
@@ -4282,6 +4307,7 @@ static int parsed_word_count(struct asmctx *c, struct das_parsed_line *line,
     case DAS_TOK_DATA:
     case DAS_TOK_BSS:
     case DAS_TOK_PSECT:
+    case DAS_TOK_DIRECTIVE:
     case DAS_TOK_NO_WORDS:
     case DAS_TOK_ENTRY:
     case DAS_TOK_GLOBAL:
@@ -6026,6 +6052,20 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
         return 0;
     case DAS_TOK_PSECT:
         *sec = psect_to_sec(parsed.rest, *sec);
+        return 0;
+    case DAS_TOK_DIRECTIVE:
+        /* .DIRECTIVE KL10 selects KL10 extended instruction syntax in
+         * MACRO-10 input.  DAS already accepts those opcodes unless
+         * explicitly restricted by -B/-K.  Validate the exact target
+         * rather than ignoring arbitrary .DIRECTIVE operands.  This
+         * does not claim that an assembled image ran on a KL10.
+         */
+        if (!streqi(parsed.key, "DIRECTIVE") ||
+            !streqi(parsed.rest, "KL10") || das_strict_base) {
+            fprintf(stderr, "das: unsupported or conflicting .DIRECTIVE: %s\n",
+                    parsed.stmt);
+            return 1;
+        }
         return 0;
     case DAS_TOK_ENTRY:
         strcopy(c->entry_name, parsed.rest, sizeof(c->entry_name));
@@ -10640,6 +10680,14 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
         return 0;
     case DAS_TOK_PSECT:
         *sec = psect_to_sec(parsed.rest, *sec);
+        return 0;
+    case DAS_TOK_DIRECTIVE:
+        if (!streqi(parsed.key, "DIRECTIVE") ||
+            !streqi(parsed.rest, "KL10") || das_strict_base) {
+            fprintf(stderr, "das: unsupported or conflicting .DIRECTIVE: %s\n",
+                    parsed.stmt);
+            return 1;
+        }
         return 0;
     case DAS_TOK_EQU:
     case DAS_TOK_SET:
