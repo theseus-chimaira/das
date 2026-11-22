@@ -3422,6 +3422,74 @@ static void expr_set_symbol(struct expr_value *v, unsigned int symbol)
     v->symbol = symbol;
 }
 
+/* Relocations cancel only if their underlying link-time base is the same.
+ * DOBJ1 cannot encode the difference between two independent EXTERNs or
+ * between symbols in separately relocated sections.  The dot pseudo-symbol
+ * has the section containing the current output address.
+ */
+static int expr_reloc_section(struct expr_state *st, int sec)
+{
+    if (sec >= DAS_SEC_TEXT && sec <= DAS_SEC_BSS)
+        return sec;
+    if (sec != -1)
+        return sec;
+    if (st->dot < text_total(st->c))
+        return DAS_SEC_TEXT;
+    if (st->dot < text_total(st->c) + st->c->loc[DAS_SEC_DATA])
+        return DAS_SEC_DATA;
+    return DAS_SEC_BSS;
+}
+
+static int expr_same_reloc_base(struct expr_state *st,
+                                struct expr_value a, struct expr_value b)
+{
+    if (a.reloc_kind != b.reloc_kind)
+        return 0;
+    if (a.reloc_kind == DAS_OBJ_RELOC_SYMBOL_RH18)
+        return a.symbol != 0U && a.symbol == b.symbol;
+    if (a.reloc_kind == DAS_OBJ_RELOC_LOCAL_RH18)
+        return expr_reloc_section(st, a.target_sec) ==
+            expr_reloc_section(st, b.target_sec);
+    return 0;
+}
+
+/* Addition and subtraction share the same relocation algebra on host and
+ * native DAS. A result with zero relocation is absolute only when two
+ * exact bases cancel, not merely because their relocation counts cancel.
+ * Carry metadata for the sole surviving base; reject all other cases.
+ */
+static int expr_addsub(struct expr_state *st, struct expr_value *a,
+                       struct expr_value b, int subtract)
+{
+    int rel;
+
+    rel = a->rel + (subtract ? -b.rel : b.rel);
+    if (a->rel != 0 && b.rel != 0) {
+        if (rel != 0) {
+            expr_error(st, "unsupported relocation expression");
+            return -1;
+        }
+        if (st->c->object_mode && !expr_same_reloc_base(st, *a, b)) {
+            expr_error(st, "unsupported difference of separately relocated symbols");
+            return -1;
+        }
+    }
+    if (a->rel == 0 && b.rel != 0) {
+        a->reloc_kind = b.reloc_kind;
+        a->target_sec = b.target_sec;
+        a->symbol = b.symbol;
+    }
+    if (rel == 0) {
+        a->reloc_kind = 0;
+        a->target_sec = DAS_SEC_ABS;
+        a->symbol = 0U;
+    }
+    a->value = subtract ? das_mask36(a->value - b.value) :
+        das_mask36(a->value + b.value);
+    a->rel = rel;
+    return 0;
+}
+
 static unsigned int set_snapshot_generation(const char *name)
 {
     const char *p;
@@ -3666,11 +3734,11 @@ static struct expr_value parse_expr_binary(struct expr_state *st, int minprec)
         st->p = p + width;
         b = parse_expr_binary(st, prec + 1);
         if (op == EXPR_OP_ADD) {
-            a.value = das_mask36(a.value + b.value);
-            a.rel += b.rel;
+            if (expr_addsub(st, &a, b, 0) != 0)
+                return a;
         } else if (op == EXPR_OP_SUB) {
-            a.value = das_mask36(a.value - b.value);
-            a.rel -= b.rel;
+            if (expr_addsub(st, &a, b, 1) != 0)
+                return a;
         } else {
             if (expr_require_abs(st, a, b) != 0)
                 return a;
@@ -3748,31 +3816,11 @@ static struct expr_value parse_expr_add(struct expr_state *st)
         st->p++;
         b = parse_expr_mul(st);
         if (op == '+') {
-            if (a.rel == 0 && b.rel != 0) {
-                a.reloc_kind = b.reloc_kind;
-                a.target_sec = b.target_sec;
-                a.symbol = b.symbol;
-            } else if (a.rel != 0 && b.rel != 0) {
-                a.reloc_kind = 0;
-                a.target_sec = DAS_SEC_ABS;
-                a.symbol = 0U;
-            }
-            a.value = das_mask36(a.value + b.value);
-            a.rel += b.rel;
+            if (expr_addsub(st, &a, b, 0) != 0)
+                return a;
         } else {
-            if (a.rel == 0 || b.rel != 0) {
-                if (a.rel == 0 && b.rel == 0) {
-                    a.reloc_kind = 0;
-                    a.target_sec = DAS_SEC_ABS;
-                    a.symbol = 0U;
-                } else if (b.rel != 0) {
-                    a.reloc_kind = 0;
-                    a.target_sec = DAS_SEC_ABS;
-                    a.symbol = 0U;
-                }
-            }
-            a.value = das_mask36(a.value - b.value);
-            a.rel -= b.rel;
+            if (expr_addsub(st, &a, b, 1) != 0)
+                return a;
         }
     }
 }
