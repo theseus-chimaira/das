@@ -12230,13 +12230,17 @@ static int phase_path_make(const char *outfile, char *path, size_t cap)
     size_t n;
 
     n = strlen(outfile);
+    /* Reuse the output basename: PROGRAM.DXR -> PROGRAM.D2R.
+     * Other suffixes retain the existing append behavior, so an output
+     * explicitly named PROGRAM.D2R cannot collide with its phase file. */
+    if (n >= 4U && strcmp(outfile + n - 4U, ".DXR") == 0)
+        n -= 4U;
     if (n + 4U >= cap)
         return -1;
-    strcopy(path, outfile, cap);
+    memcpy(path, outfile, n);
     strcopy(path + n, ".D2R", cap - n);
     return 0;
 }
-
 #endif
 
 #ifndef DAS_PHASE2_PROGRAM
@@ -12613,6 +12617,7 @@ int das_native_main(int argc, kword_t **argv)
 #endif
 #if defined(DAS_NATIVE_PHASE1_ONLY) || defined(DAS_NATIVE_PHASE2_ONLY)
     size_t n;
+    char *suffix;
 #endif
 
     /*
@@ -12680,7 +12685,12 @@ int das_native_main(int argc, kword_t **argv)
         if (n + 4U > SYS_RUN_PATH_MAX_CHARS)
             return 1;
         strcopy(in, out, sizeof(in));
-        strcopy(in + n, ".D2R", sizeof(in) - n);
+        /* Reuse an existing byte pointer; indexed byte-pointer arithmetic
+         * costs native PDP-6 code words. */
+        suffix = strrchr(in, '.');
+        if (suffix == 0 || strcmp(suffix, ".DXR") != 0)
+            suffix = strchr(in, 0);
+        strcopy(suffix, ".D2R", sizeof(in) - n);
         have_in = 1;
     }
 #else
@@ -12692,7 +12702,11 @@ int das_native_main(int argc, kword_t **argv)
     if (n + 4U > KPATH_MAX_CHARS)
         return 1;
     strcopy(phase, out, sizeof(phase));
-    strcopy(phase + n, ".D2R", sizeof(phase) - n);
+    /* Match DAS2's output-basename rule without byte-pointer offsets. */
+    suffix = strrchr(phase, '.');
+    if (suffix == 0 || strcmp(suffix, ".DXR") != 0)
+        suffix = strchr(phase, 0);
+    strcopy(suffix, ".D2R", sizeof(phase) - n);
     (void)remove(phase);
     rc = assemble_phase1_file(in, out, phase, input_format);
     if (rc != 0 || !chain_phase2)

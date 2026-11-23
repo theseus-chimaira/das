@@ -1,5 +1,28 @@
 # DAS current status
 
+## 2026-11-23 v1884: phase basename and strict 16K process check
+
+For the standard `PROGRAM.DXR` output, DAS1 now creates `PROGRAM.D2R`
+instead of `PROGRAM.DXR.D2R`; native DAS2 derives the same name and
+removes it after consumption. The host two-phase path uses the same
+rule. Other output suffixes retain their appended `.D2R` fallback,
+avoiding collision when the output itself is named `PROGRAM.D2R`.
+Versioned host and mocked native phase-1/phase-2 path regressions PASS.
+
+This change does **not** save resident path-buffer words: buffers remain
+bounded and statically sized. Reusing an existing byte pointer avoids
+expensive indexed native byte arithmetic, limiting new image code to
+000005 octal words per phase. Verified v1884 image/BSS/002000-stack
+process totals (all octal): DAS 000571/000000/002571; DAS1
+**034323/001423/037746**; DAS2 **031027/001114/034143**. The
+steady-state chain peak is 037746, 26 decimal words below the hard
+040000-word (16K) process gate. The unchanged strict image gates
+034000/031000 still FAIL by 000323/000027.
+Normal kernel EXEC can transiently stage a second VM before releasing
+the first, so a **hard physical 16K peak across EXEC is NOT certified**.
+It requires a guest physical-memory trace or a deterministic destructive
+replacement path with its own acceptance tests; no gate was relaxed.
+
 ## 2026-11-23 v1883: compact native extended opcodes
 
 Native DAS2 compresses 22 three-through-five-letter extended opcodes
