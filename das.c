@@ -15,6 +15,7 @@
 #ifdef DAS_NATIVE
 #ifndef DAS_NATIVE_CORE_ONLY
 #include "das_native_runtime.h"
+#include <pdp10-sixbit.h>
 #endif
 #elif defined(DAS_HOST)
 #include <ctype.h>
@@ -1387,11 +1388,13 @@ int das_native_selftest(void)
 #define DAS_MAX_WORK_WORDS 65536U
 #define DAS_TARGET_CHARS_PER_WORD 4U
 #ifdef DAS_NATIVE
-#define DAS_SYM_BUCKETS 128U
+#define DAS_SYM_BUCKETS 64U
 /* Native symbol capacity is spill-backed, so the bucket array is only a
- * lookup accelerator.  128 heads keep the resident index compact without
- * changing symbol capacity or semantics; collisions remain spill-backed. */
-#define DAS_SYM_CACHE_ENTRIES 13U
+ * lookup accelerator.  64 heads plus a seven-entry direct cache preserve
+ * unbounded spill-backed symbol capacity while leaving room for the
+ * one-process DAS1->DAS2 EXEC chain under the 040000-word process limit.
+ * Both counts affect lookup speed, not accepted symbol semantics. */
+#define DAS_SYM_CACHE_ENTRIES 7U
 #define DAS_PARSER_WORK_WORDS 1536U
 #else
 #define DAS_SYM_BUCKETS 2048U
@@ -12149,12 +12152,77 @@ static int das_counted_sixbit_arg_text(const das_word_t *arg, char *text,
 
 #ifdef DAS_NATIVE
 
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+/* A chained DAS1 atomically replaces itself with DAS2.  No driver or
+ * other helper remains resident while phase 1 runs.  Standalone DAS1
+ * invocations retain their existing one-pass behavior. */
+static const kword_t das_phase2_exec_path[] = {
+    29UL,
+    PDP10_SIX6('/','O','P','T','I','O'),
+    PDP10_SIX6('N','/','B','A','S','E'),
+    PDP10_SIX6('/','L','I','B','E','X'),
+    PDP10_SIX6('E','C','/','D','A','S'),
+    PDP10_SIX6('/','D','A','S','2',' ')
+};
+static const kword_t das_phase2_exec_name[] = {
+    4UL,
+    PDP10_SIX6('D','A','S','2',' ',' ')
+};
+static const kword_t das_phase2_exec_option[] = {
+    2UL,
+    PDP10_SIX6('-','O',' ',' ',' ',' ')
+};
+
+#define DAS_PHASE2_EXEC_WORDS \
+    (SYS_EXEC_V1_FIXED_WORDS + 6U + 2U + 2U + DAS_NATIVE_PATH_WORDS)
+
+static int das_phase2_exec(const das_word_t *output_record)
+{
+    kword_t block[DAS_PHASE2_EXEC_WORDS];
+    struct sys_exec_v1 *launch;
+    unsigned int n;
+    unsigned int words;
+    unsigned int used;
+    unsigned int i;
+
+    if (output_record == 0)
+        return 126;
+    n = (unsigned int)(output_record[0] & DAS_HALF_MASK);
+    if (n == 0U || n > SYS_RUN_ARG_MAX_CHARS)
+        return 126;
+    words = 1U + (n + 5U) / 6U;
+    if (words > DAS_NATIVE_PATH_WORDS)
+        return 126;
+
+    used = SYS_EXEC_V1_FIXED_WORDS;
+    for (i = 0U; i < sizeof(das_phase2_exec_path) /
+            sizeof(das_phase2_exec_path[0]); ++i)
+        block[used++] = das_phase2_exec_path[i];
+    for (i = 0U; i < sizeof(das_phase2_exec_name) /
+            sizeof(das_phase2_exec_name[0]); ++i)
+        block[used++] = das_phase2_exec_name[i];
+    for (i = 0U; i < sizeof(das_phase2_exec_option) /
+            sizeof(das_phase2_exec_option[0]); ++i)
+        block[used++] = das_phase2_exec_option[i];
+    for (i = 0U; i < words; ++i)
+        block[used++] = output_record[i];
+    launch = (struct sys_exec_v1 *)block;
+    launch->version_words = SYS_RUN_HEADER(SYS_EXEC_VERSION_1, used);
+    launch->argc = 3UL;
+    launch->envc = 0UL;
+    return dsys_exec(launch) < 0 ? 126 : 1;
+}
+#endif
+
 int das_native_main(int argc, kword_t **argv)
 {
     char out[SYS_RUN_ARG_MAX_CHARS + 1U];
     char in[SYS_RUN_ARG_MAX_CHARS + 1U];
 #if defined(DAS_NATIVE_PHASE1_ONLY)
     char phase[SYS_RUN_PATH_MAX_CHARS + 1U];
+    const das_word_t *output_record;
+    int chain_phase2;
+    int rc;
 #endif
     char argtext[SYS_RUN_ARG_MAX_CHARS + 1U];
     int have_out;
@@ -12175,12 +12243,18 @@ int das_native_main(int argc, kword_t **argv)
     (void)dsys_close(DSYS_STDIN);
     (void)dsys_close(DSYS_STDOUT);
 
-    if (argc < 0 || argc > (int)SYS_RUN_ARG_MAX || argv == 0)
+    if (argc <= 0 || argc > (int)SYS_RUN_ARG_MAX || argv == 0)
         return 1;
     have_out = 0;
     have_in = 0;
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
     input_format = DAS_INPUT_S6REC;
+#endif
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+    output_record = 0;
+    chain_phase2 = das_counted_sixbit_arg_text(
+        (const das_word_t *)argv[0], argtext, sizeof(argtext)) == 0 &&
+        strcmp(argtext, "DAS1CHAIN") == 0;
 #endif
     for (i = 1; i < argc; i++) {
         if (das_counted_sixbit_arg_text((const das_word_t *)argv[i],
@@ -12191,6 +12265,9 @@ int das_native_main(int argc, kword_t **argv)
                     (const das_word_t *)argv[i], out, sizeof(out)) != 0)
                 return 1;
             have_out = 1;
+#if defined(DAS_NATIVE_PHASE1_ONLY)
+            output_record = (const das_word_t *)argv[i];
+#endif
 #if !defined(DAS_NATIVE_PHASE2_ONLY)
         } else if (strcmp(argtext, "-B") == 0) {
             das_strict_base = 1;
@@ -12237,7 +12314,10 @@ int das_native_main(int argc, kword_t **argv)
     strcopy(phase, out, sizeof(phase));
     strcopy(phase + n, ".D2R", sizeof(phase) - n);
     (void)remove(phase);
-    return assemble_phase1_file(in, out, phase, input_format);
+    rc = assemble_phase1_file(in, out, phase, input_format);
+    if (rc != 0 || !chain_phase2)
+        return rc;
+    return das_phase2_exec(output_record);
 #elif defined(DAS_NATIVE_PHASE2_ONLY)
     return assemble_phase2_file(in, out);
 #else

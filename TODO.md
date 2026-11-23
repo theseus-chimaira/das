@@ -4,10 +4,16 @@
 
 The 68-instruction comment scanner and native 64-word scratch-backed
 relocation bitmap have prior independent acceptance. The CURRENT
-v1877 KCC-built DAS1/DAS2 phase images are 034101/031037 octal words,
-still above the unchanged 034000/031000 ceilings by 000101/000037.
-The reserved 02000-word stacks now fit inside the 040000-word full
-process limit: 037756 for DAS1 and 034405 for DAS2, both octal.
+v1881 KCC-built DAS1/DAS2 phase images are 034331/031037 octal words,
+still above the unchanged 034000/031000 ceilings by 000331/000037.
+The native driver now uses EXEC, not RUN/WAIT; DAS1 uses EXEC for DAS2
+after a successful first pass. With no concurrently resident driver,
+the 02000-word reserved stack gives a steady-state peak of 037754 octal
+(16,364 decimal words), only 20 words under the 040000 limit.
+The independent source-level EXEC handoff tests and DXR peak checker
+pass. However kernel transactional EXEC staging and end-to-end guest
+execution still require direct validation; the steady-state test is not
+proof of a strict transient physical-RAM peak.
 Continue shrinking both images without increasing BSS or relaxing the
 limits, then repeat the strict phase-image checker and native guest
 acceptance. Earlier phase-image passes were historical compiler states.

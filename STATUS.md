@@ -1,5 +1,29 @@
 # DAS current status
 
+## 2026-11-23 v1881: single-process EXEC phase chain, RAM gate PASS
+
+The native DAS launcher now `EXEC`s DAS1, and the internally marked
+DAS1 invocation `EXEC`s DAS2 after successful phase-file generation.
+This removes concurrent driver+DAS1 residence; standalone DAS1 still
+performs only phase 1. Native symbol-index RAM was reduced from 128/13
+bucket/cache entries to 64/7 without reducing spill-backed capacity.
+
+Measured native image/BSS/process sizes (octal words, 02000 stack):
+
+| Process | Image | BSS | Full process |
+| --- | ---: | ---: | ---: |
+| Launcher | 000571 | 000000 | 002571 |
+| DAS1 | 034331 | 001423 | **037754** |
+| DAS2 | 031037 | 001114 | 034153 |
+
+The **steady-state maximum is 037754 octal = 16,364 decimal words**, 20
+words below 16K. The new independent testkit gate and driver-to-DAS1,
+DAS1-to-DAS2 `EXEC` launch-block tests pass. Host assembler suites pass.
+Transactional kernel `EXEC` VM staging and an end-to-end native guest
+run remain unverified. The separate, unchanged phase-image ceilings
+034000/031000 still **FAIL** by 000331/000037, respectively. These must
+be satisfied before final native acceptance is claimed.
+
 ## 2026-11-23 v1877: packed phase-2 opcode metadata, image gate OPEN
 
 The complete 390-opcode table has been preserved while the 364 three-
