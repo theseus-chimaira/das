@@ -1,5 +1,17 @@
 # DAS current status
 
+## 2026-11-23 v1883: compact native extended opcodes
+
+Native DAS2 compresses 22 three-through-five-letter extended opcodes
+with their nine-bit values into single resident words; two six-letter
+names retain exact comparisons. The independent frozen 24-opcode oracle
+passes. DAS2 is now **031022 image and 001114 BSS** octal words, with
+full process size **034136** including 002000 stack. DAS1 remains
+034316/001423/002000 = **037741**. The steady-state 16K RAM gate
+remains satisfied through the v1881 EXEC-chain design. Native image
+ceilings 034000/031000 still fail by 000316/000022; guest and transient
+EXEC physical-RAM acceptance remain OPEN.
+
 ## 2026-11-23 v1882: phase-1 three-letter key compaction
 
 Pairing the 59 three-letter base opcode names into 18-bit half-words

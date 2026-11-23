@@ -2464,43 +2464,44 @@ static int das_memory_report = 0;
 static const char *das_labels_out = 0;
 #endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
-static int lookup_extra_op_mn(das_word_t m)
+static int lookup_extra_op_mn(das_word_t key)
 {
-    struct op_entry {
-        das_word_t name;
-        unsigned int op;
-    };
-    static const struct op_entry table[] = {
-        {DAS_OP5('P','M','O','V','E'),     0052U},
-        {DAS_OP6('P','M','O','V','E','M'), 0053U},
-        {DAS_OP4('U','J','E','N'),         0100U},
-        {DAS_OP4('G','F','A','D'),         0102U},
-        {DAS_OP4('G','F','S','B'),         0103U},
-        {DAS_OP4('J','S','Y','S'),         0104U},
-        {DAS_OP4('G','F','M','P'),         0106U},
-        {DAS_OP4('G','F','D','V'),         0107U},
-        {DAS_OP4('C','I','R','C'),         0247U},
-        {DAS_OP5('A','P','R','I','D'),     0700U},
-        {DAS_OP5('U','M','O','V','E'),     0704U},
-        {DAS_OP6('U','M','O','V','E','M'), 0705U},
-        {DAS_OP4('T','I','O','E'),         0710U},
-        {DAS_OP4('T','I','O','N'),         0711U},
-        {DAS_OP4('R','D','I','O'),         0712U},
-        {DAS_OP4('W','R','I','O'),         0713U},
-        {DAS_OP4('B','S','I','O'),         0714U},
-        {DAS_OP4('B','C','I','O'),         0715U},
-        {DAS_OP5('T','I','O','E','B'),     0720U},
-        {DAS_OP5('T','I','O','N','B'),     0721U},
-        {DAS_OP5('R','D','I','O','B'),     0722U},
-        {DAS_OP5('W','R','I','O','B'),     0723U},
-        {DAS_OP5('B','S','I','O','B'),     0724U},
-        {DAS_OP5('B','C','I','O','B'),     0725U}
+    /* The short names and nine-bit opcodes fit into one word each;
+     * only PMOVEM and UMOVEM require a full six-letter key. */
+    static const das_word_t table[] = {
+        DAS_W(0101537305052), /* PMOVE */
+        DAS_W(0002524256100), /* UJEN */
+        DAS_W(0000714044102), /* GFAD */
+        DAS_W(0000715142103), /* GFSB */
+        DAS_W(0001247463104), /* JSYS */
+        DAS_W(0000714660106), /* GFMP */
+        DAS_W(0000714226107), /* GFDV */
+        DAS_W(0000323103247), /* CIRC */
+        DAS_W(0006044444700), /* APRID */
+        DAS_W(0125537305704), /* UMOVE */
+        DAS_W(0002422745710), /* TIOE */
+        DAS_W(0002422756711), /* TION */
+        DAS_W(0002210457712), /* RDIO */
+        DAS_W(0002744457713), /* WRIO */
+        DAS_W(0000246457714), /* BSIO */
+        DAS_W(0000206457715), /* BCIO */
+        DAS_W(0121136242720), /* TIOEB */
+        DAS_W(0121136702721), /* TIONB */
+        DAS_W(0110422742722), /* RDIOB */
+        DAS_W(0136222742723), /* WRIOB */
+        DAS_W(0012322742724), /* BSIOB */
+        DAS_W(0010322742725) /* BCIOB */
     };
     unsigned int i;
+    das_word_t entry;
 
-    for (i = 0U; i < (unsigned int)(sizeof(table) / sizeof(table[0])); i++)
-        if (table[i].name == m)
-            return (int)table[i].op;
+    if (key == DAS_W(0004065754255)) return 053; /* PMOVEM */
+    if (key == DAS_W(0005265754255)) return 0705; /* UMOVEM */
+    for (i = 0U; i < sizeof(table) / sizeof(table[0]); i++) {
+        entry = table[i];
+        if ((entry >> 9U) == key)
+            return (int)(entry & DAS_W(0777));
+    }
     return -1;
 }
 static int lookup_op(const char *s, int *nonbase)
@@ -2512,7 +2513,6 @@ static int lookup_op(const char *s, int *nonbase)
     op = lookup_op_key5(m, nonbase);
     if (op >= 0)
         return op;
-    m = sixbit_mn(s);
     op = lookup_extra_op_mn(m);
     if (op >= 0 && nonbase != 0)
         *nonbase = 1;

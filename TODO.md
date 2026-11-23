@@ -4,8 +4,8 @@
 
 The 68-instruction comment scanner and native 64-word scratch-backed
 relocation bitmap have prior independent acceptance. The CURRENT
-v1882 KCC-built DAS1/DAS2 phase images are 034316/031037 octal words,
-still above the unchanged 034000/031000 ceilings by 000316/000037.
+v1883 KCC-built DAS1/DAS2 phase images are 034316/031022 octal words,
+still above the unchanged 034000/031000 ceilings by 000316/000022.
 The native driver now uses EXEC, not RUN/WAIT; DAS1 uses EXEC for DAS2
 after a successful first pass. With no concurrently resident driver,
 the 02000-word reserved stack gives a steady-state peak of 037741 octal
