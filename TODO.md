@@ -4,12 +4,12 @@
 
 The 68-instruction comment scanner and native 64-word scratch-backed
 relocation bitmap have prior independent acceptance. The CURRENT
-v1881 KCC-built DAS1/DAS2 phase images are 034331/031037 octal words,
-still above the unchanged 034000/031000 ceilings by 000331/000037.
+v1882 KCC-built DAS1/DAS2 phase images are 034316/031037 octal words,
+still above the unchanged 034000/031000 ceilings by 000316/000037.
 The native driver now uses EXEC, not RUN/WAIT; DAS1 uses EXEC for DAS2
 after a successful first pass. With no concurrently resident driver,
-the 02000-word reserved stack gives a steady-state peak of 037754 octal
-(16,364 decimal words), only 20 words under the 040000 limit.
+the 02000-word reserved stack gives a steady-state peak of 037741 octal
+(16,353 decimal words), only 31 words under the 040000 limit.
 The independent source-level EXEC handoff tests and DXR peak checker
 pass. However kernel transactional EXEC staging and end-to-end guest
 execution still require direct validation; the steady-state test is not

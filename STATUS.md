@@ -1,5 +1,17 @@
 # DAS current status
 
+## 2026-11-23 v1882: phase-1 three-letter key compaction
+
+Pairing the 59 three-letter base opcode names into 18-bit half-words
+removes 29 table words and saves 000015 octal linked image words after
+decoding overhead. DAS1 is now **034316 image + 001423 BSS + 002000
+stack = 037741 octal words**, 31 decimal words below 16K. DAS2 is
+unchanged at 031037/001114/002000. The driver uses the v1881 nonresident
+EXEC-chain model (000571 image words). The independent 390-name
+phase-1 opcode oracle passes. Native phase image limits remain open:
+034316 > 034000 and 031037 > 031000. End-to-end guest and transient
+EXEC-memory acceptance remain open.
+
 ## 2026-11-23 v1881: single-process EXEC phase chain, RAM gate PASS
 
 The native DAS launcher now `EXEC`s DAS1, and the internally marked
