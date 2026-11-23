@@ -3566,6 +3566,7 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
     char *q;
     das_word_t v;
     int n;
+    int local_label;
 
     out = expr_abs(DAS_W(0));
     st->p = skipws(st->p);
@@ -3583,14 +3584,12 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
     if (*st->p == '.' && isdigit((unsigned char)st->p[1])) {
         q = st->p + 1;
         n = 2;
+        local_label = 1;
         tok[0] = '%';
         tok[1] = 'L';
         while (isdigit((unsigned char)*q) && n < DAS_MAX_NAME)
             tok[n++] = *q++;
-        tok[n] = 0;
-        out = expr_resolve_name(st, tok, 1);
-        st->p = q;
-        return out;
+        goto resolve_name;
     }
     if (*st->p == '.') {
         out.value = st->dot;
@@ -3611,14 +3610,21 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
     }
     if (isname0((unsigned char)*st->p)) {
         n = 0;
-        while (isname((unsigned char)*st->p) && n < DAS_MAX_NAME)
-            tok[n++] = *st->p++;
-        tok[n] = 0;
-        out = expr_resolve_name(st, tok, 0);
-        return out;
+        q = st->p;
+        local_label = 0;
+        while (isname((unsigned char)*q) && n < DAS_MAX_NAME)
+            tok[n++] = *q++;
+        goto resolve_name;
     }
     expr_error(st, "malformed expression");
     return out;
+
+resolve_name:
+    /* Numeric locals and ordinary symbols have different lookup policies,
+     * but their token terminator and five-field result return are shared. */
+    tok[n] = 0;
+    st->p = q;
+    return expr_resolve_name(st, tok, local_label);
 }
 
 static struct expr_value parse_expr_unary(struct expr_state *st)
@@ -7255,7 +7261,9 @@ static int emit_text_directive(char *p, unsigned int dot,
     if (delimited_text_len(q, &len) != 0)
         return -1;
     text = q + 1;
-    perword = 36U / bits;
+    /* Only 6-bit and 7-bit text reaches this writer.  Avoid a dynamic
+     * division in the native phase-2 image for these fixed widths. */
+    perword = bits == 6U ? 6U : 5U;
     for (wi = 0U; wi < maxwords; wi++) {
         unsigned int slot;
         das_word_t word;
@@ -7332,6 +7340,7 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
                       das_word_t *w, int *reloc, int default_base)
 {
     char *q;
+    char *d;
     int ir;
 
     q = skipws(p);
@@ -7368,8 +7377,8 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
     ir = parse_instruction_word(c, q, dot, w, reloc, 0);
     if (ir)
         return ir < 0 ? -1 : 0;
-    if (strstr(q, ",,")) {
-        char *d;
+    d = strstr(q, ",,");
+    if (d != 0) {
         das_word_t lh;
         das_word_t rh;
         int r1;
@@ -7379,7 +7388,6 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
         unsigned int lsy;
         das_word_t la;
 
-        d = strstr(q, ",,");
         lk = 0;
         ls = DAS_SEC_ABS;
         lsy = 0U;

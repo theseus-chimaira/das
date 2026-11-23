@@ -1,5 +1,16 @@
 # DAS current status
 
+## 2026-11-23 v1864: further measured reductions, phase gate still OPEN
+
+Current KCC/PDP-6 source-built phase images are **034135/031253**
+(octal); unchanged BSS **002103/001573**. Both are still over their
+mandatory image ceilings **034000/031000** by **000135/000253**.
+Shared expression symbol returns, one double-comma search, and fixed
+text-packing widths further reduced code from v1861 without adding BSS.
+Full/fast host regressions, direct text/BYTE/LONG oracle, exhaustive
+OWGBP selectors, and native comment-scanner contract pass; full native
+DAIMOS guest acceptance remains open.
+
 ## 2026-11-23: Strict native phase image-size acceptance remains OPEN
 
 The current installed KCC/PDP-6 profile differs from the historical
