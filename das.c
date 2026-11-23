@@ -322,6 +322,7 @@ static void das_a7_init(struct das_a7reader *r,
 
 #define DAS_OP_COUNT 390U
 #define DAS_OP_INFO_PER_WORD 3U
+#if defined(DAS_NATIVE_PHASE1_ONLY)
 static const das_word_t das_op_mn[DAS_OP_COUNT] = {
     DAS_OP3('A','D','D'),
     DAS_OP3('A','N','D'),
@@ -714,138 +715,418 @@ static const das_word_t das_op_mn[DAS_OP_COUNT] = {
     DAS_OP6('S','K','I','P','L','E'),
     DAS_OP6('X','M','O','V','E','I')
 };
+#else
+/* Native phase 2 and host retain one word per 3..5 letter name:
+ * five bits per letter plus ten bits for opcode/extension metadata.
+ * The 26 six-letter names retain their own exact 30-bit key table. */
+#define DAS_OP_COMPACT_COUNT 364U
+#define DAS_OP_SIX_COUNT 26U
+static const das_word_t das_op_compact[DAS_OP_COMPACT_COUNT] = {
+    DAS_W(0000004410270), /* ADD */
+    DAS_W(0000005610404), /* AND */
+    DAS_W(0000005724340), /* AOJ */
+    DAS_W(0000005746350), /* AOS */
+    DAS_W(0000006320240), /* ASH */
+    DAS_W(0000011450251), /* BLT */
+    DAS_W(0000014122300), /* CAI */
+    DAS_W(0000014132310), /* CAM */
+    DAS_W(0000020635131), /* DFN */
+    DAS_W(0000021154234), /* DIV */
+    DAS_W(0000022004137), /* DPB */
+    DAS_W(0000026154444), /* EQV */
+    DAS_W(0000030111140), /* FAD */
+    DAS_W(0000030455170), /* FDV */
+    DAS_W(0000031161122), /* FIX */
+    DAS_W(0000031541160), /* FMP */
+    DAS_W(0000032305150), /* FSB */
+    DAS_W(0000032307132), /* FSC */
+    DAS_W(0000041430500), /* HLL */
+    DAS_W(0000041444544), /* HLR */
+    DAS_W(0000042230504), /* HRL */
+    DAS_W(0000042244540), /* HRR */
+    DAS_W(0000044240133), /* IBP */
+    DAS_W(0000045744434), /* IOR */
+    DAS_W(0000052202267), /* JRA */
+    DAS_W(0000052302266), /* JSA */
+    DAS_W(0000052340265), /* JSP */
+    DAS_W(0000052344264), /* JSR */
+    DAS_W(0000060404135), /* LDB */
+    DAS_W(0000062320242), /* LSH */
+    DAS_W(0000064141257), /* MAP */
+    DAS_W(0000066530224), /* MUL */
+    DAS_W(0000076204437), /* ORB */
+    DAS_W(0000076222435), /* ORI */
+    DAS_W(0000076232436), /* ORM */
+    DAS_W(0000101740262), /* POP */
+    DAS_W(0000111750241), /* ROT */
+    DAS_W(0000115724360), /* SOJ */
+    DAS_W(0000115746370), /* SOS */
+    DAS_W(0000116504274), /* SUB */
+    DAS_W(0000120406650), /* TDC */
+    DAS_W(0000120434610), /* TDN */
+    DAS_W(0000120436670), /* TDO */
+    DAS_W(0000120464630), /* TDZ */
+    DAS_W(0000121406641), /* TLC */
+    DAS_W(0000121434601), /* TLN */
+    DAS_W(0000121436661), /* TLO */
+    DAS_W(0000121464621), /* TLZ */
+    DAS_W(0000122206640), /* TRC */
+    DAS_W(0000122234600), /* TRN */
+    DAS_W(0000122236660), /* TRO */
+    DAS_W(0000122264620), /* TRZ */
+    DAS_W(0000122306651), /* TSC */
+    DAS_W(0000122334611), /* TSN */
+    DAS_W(0000122336671), /* TSO */
+    DAS_W(0000122364631), /* TSZ */
+    DAS_W(0000124603130), /* UFA */
+    DAS_W(0000140350256), /* XCT */
+    DAS_W(0000141744430), /* XOR */
+    DAS_W(0000220404273), /* ADDB */
+    DAS_W(0000220422271), /* ADDI */
+    DAS_W(0000220432272), /* ADDM */
+    DAS_W(0000270404407), /* ANDB */
+    DAS_W(0000270422405), /* ANDI */
+    DAS_W(0000270432406), /* ANDM */
+    DAS_W(0000275202344), /* AOJA */
+    DAS_W(0000275212342), /* AOJE */
+    DAS_W(0000275216347), /* AOJG */
+    DAS_W(0000275230341), /* AOJL */
+    DAS_W(0000275234346), /* AOJN */
+    DAS_W(0000276302354), /* AOSA */
+    DAS_W(0000276312352), /* AOSE */
+    DAS_W(0000276316357), /* AOSG */
+    DAS_W(0000276330351), /* AOSL */
+    DAS_W(0000276334356), /* AOSN */
+    DAS_W(0000315006244), /* ASHC */
+    DAS_W(0000605102304), /* CAIA */
+    DAS_W(0000605112302), /* CAIE */
+    DAS_W(0000605116307), /* CAIG */
+    DAS_W(0000605130301), /* CAIL */
+    DAS_W(0000605134306), /* CAIN */
+    DAS_W(0000605502314), /* CAMA */
+    DAS_W(0000605512312), /* CAME */
+    DAS_W(0000605516317), /* CAMG */
+    DAS_W(0000605530311), /* CAML */
+    DAS_W(0000605534316), /* CAMN */
+    DAS_W(0001004411114), /* DADD */
+    DAS_W(0001021155117), /* DDIV */
+    DAS_W(0001030111110), /* DFAD */
+    DAS_W(0001030455113), /* DFDV */
+    DAS_W(0001031541112), /* DFMP */
+    DAS_W(0001032305111), /* DFSB */
+    DAS_W(0001046604237), /* DIVB */
+    DAS_W(0001046622235), /* DIVI */
+    DAS_W(0001046632236), /* DIVM */
+    DAS_W(0001066531116), /* DMUL */
+    DAS_W(0001116505115), /* DSUB */
+    DAS_W(0001306604447), /* EQVB */
+    DAS_W(0001306622445), /* EQVI */
+    DAS_W(0001306632446), /* EQVM */
+    DAS_W(0001340320250), /* EXCH */
+    DAS_W(0001404405143), /* FADB */
+    DAS_W(0001404431141), /* FADL */
+    DAS_W(0001404433142), /* FADM */
+    DAS_W(0001404445144), /* FADR */
+    DAS_W(0001422605173), /* FDVB */
+    DAS_W(0001422631171), /* FDVL */
+    DAS_W(0001422633172), /* FDVM */
+    DAS_W(0001422645174), /* FDVR */
+    DAS_W(0001447045126), /* FIXR */
+    DAS_W(0001462445127), /* FLTR */
+    DAS_W(0001466005163), /* FMPB */
+    DAS_W(0001466031161), /* FMPL */
+    DAS_W(0001466033162), /* FMPM */
+    DAS_W(0001466045164), /* FMPR */
+    DAS_W(0001514205153), /* FSBB */
+    DAS_W(0001514231151), /* FSBL */
+    DAS_W(0001514233152), /* FSBM */
+    DAS_W(0001514245154), /* FSBR */
+    DAS_W(0002005450254), /* HALT */
+    DAS_W(0002061412530), /* HLLE */
+    DAS_W(0002061422501), /* HLLI */
+    DAS_W(0002061432502), /* HLLM */
+    DAS_W(0002061436520), /* HLLO */
+    DAS_W(0002061446503), /* HLLS */
+    DAS_W(0002061464510), /* HLLZ */
+    DAS_W(0002062212574), /* HLRE */
+    DAS_W(0002062222545), /* HLRI */
+    DAS_W(0002062232546), /* HLRM */
+    DAS_W(0002062236564), /* HLRO */
+    DAS_W(0002062246547), /* HLRS */
+    DAS_W(0002062264554), /* HLRZ */
+    DAS_W(0002111412534), /* HRLE */
+    DAS_W(0002111422505), /* HRLI */
+    DAS_W(0002111432506), /* HRLM */
+    DAS_W(0002111436524), /* HRLO */
+    DAS_W(0002111446507), /* HRLS */
+    DAS_W(0002111464514), /* HRLZ */
+    DAS_W(0002112212570), /* HRRE */
+    DAS_W(0002112222541), /* HRRI */
+    DAS_W(0002112232542), /* HRRM */
+    DAS_W(0002112236560), /* HRRO */
+    DAS_W(0002112246543), /* HRRS */
+    DAS_W(0002112264550), /* HRRZ */
+    DAS_W(0002221154230), /* IDIV */
+    DAS_W(0002222004136), /* IDPB */
+    DAS_W(0002260404134), /* ILDB */
+    DAS_W(0002266530220), /* IMUL */
+    DAS_W(0002276204437), /* IORB */
+    DAS_W(0002276222435), /* IORI */
+    DAS_W(0002276232436), /* IORM */
+    DAS_W(0002430330255), /* JFCL */
+    DAS_W(0002430636243), /* JFFO */
+    DAS_W(0002512350254), /* JRST */
+    DAS_W(0002525540320), /* JUMP */
+    DAS_W(0003115006246), /* LSHC */
+    DAS_W(0003276612200), /* MOVE */
+    DAS_W(0003276632214), /* MOVM */
+    DAS_W(0003276634210), /* MOVN */
+    DAS_W(0003276646204), /* MOVS */
+    DAS_W(0003325404227), /* MULB */
+    DAS_W(0003325422225), /* MULI */
+    DAS_W(0003325432226), /* MULM */
+    DAS_W(0003710302454), /* ORCA */
+    DAS_W(0003710304470), /* ORCB */
+    DAS_W(0003710332464), /* ORCM */
+    DAS_W(0004076024263), /* POPJ */
+    DAS_W(0004126320261), /* PUSH */
+    DAS_W(0004476406245), /* ROTC */
+    DAS_W(0004626402424), /* SETA */
+    DAS_W(0004626432414), /* SETM */
+    DAS_W(0004626436474), /* SETO */
+    DAS_W(0004626464400), /* SETZ */
+    DAS_W(0004655140330), /* SKIP */
+    DAS_W(0004675202364), /* SOJA */
+    DAS_W(0004675212362), /* SOJE */
+    DAS_W(0004675216367), /* SOJG */
+    DAS_W(0004675230361), /* SOJL */
+    DAS_W(0004675234366), /* SOJN */
+    DAS_W(0004676302374), /* SOSA */
+    DAS_W(0004676312372), /* SOSE */
+    DAS_W(0004676316377), /* SOSG */
+    DAS_W(0004676330371), /* SOSL */
+    DAS_W(0004676334376), /* SOSN */
+    DAS_W(0004724204277), /* SUBB */
+    DAS_W(0004724222275), /* SUBI */
+    DAS_W(0004724232276), /* SUBM */
+    DAS_W(0005020302654), /* TDCA */
+    DAS_W(0005020312652), /* TDCE */
+    DAS_W(0005020334656), /* TDCN */
+    DAS_W(0005021602614), /* TDNA */
+    DAS_W(0005021612612), /* TDNE */
+    DAS_W(0005021634616), /* TDNN */
+    DAS_W(0005021702674), /* TDOA */
+    DAS_W(0005021712672), /* TDOE */
+    DAS_W(0005021734676), /* TDON */
+    DAS_W(0005023202634), /* TDZA */
+    DAS_W(0005023212632), /* TDZE */
+    DAS_W(0005023234636), /* TDZN */
+    DAS_W(0005060302645), /* TLCA */
+    DAS_W(0005060312643), /* TLCE */
+    DAS_W(0005060334647), /* TLCN */
+    DAS_W(0005061602605), /* TLNA */
+    DAS_W(0005061612603), /* TLNE */
+    DAS_W(0005061634607), /* TLNN */
+    DAS_W(0005061702665), /* TLOA */
+    DAS_W(0005061712663), /* TLOE */
+    DAS_W(0005061734667), /* TLON */
+    DAS_W(0005063202625), /* TLZA */
+    DAS_W(0005063212623), /* TLZE */
+    DAS_W(0005063234627), /* TLZN */
+    DAS_W(0005110302644), /* TRCA */
+    DAS_W(0005110312642), /* TRCE */
+    DAS_W(0005110334646), /* TRCN */
+    DAS_W(0005111602604), /* TRNA */
+    DAS_W(0005111612602), /* TRNE */
+    DAS_W(0005111634606), /* TRNN */
+    DAS_W(0005111702664), /* TROA */
+    DAS_W(0005111712662), /* TROE */
+    DAS_W(0005111734666), /* TRON */
+    DAS_W(0005113202624), /* TRZA */
+    DAS_W(0005113212622), /* TRZE */
+    DAS_W(0005113234626), /* TRZN */
+    DAS_W(0005114302655), /* TSCA */
+    DAS_W(0005114312653), /* TSCE */
+    DAS_W(0005114334657), /* TSCN */
+    DAS_W(0005115602615), /* TSNA */
+    DAS_W(0005115612613), /* TSNE */
+    DAS_W(0005115634617), /* TSNN */
+    DAS_W(0005115702675), /* TSOA */
+    DAS_W(0005115712673), /* TSOE */
+    DAS_W(0005115734677), /* TSON */
+    DAS_W(0005117202635), /* TSZA */
+    DAS_W(0005117212633), /* TSZE */
+    DAS_W(0005117234637), /* TSZN */
+    DAS_W(0006076204433), /* XORB */
+    DAS_W(0006076222431), /* XORI */
+    DAS_W(0006076232432), /* XORM */
+    DAS_W(0011050240133), /* ADJBP */
+    DAS_W(0011052340105), /* ADJSP */
+    DAS_W(0013420302410), /* ANDCA */
+    DAS_W(0013420304440), /* ANDCB */
+    DAS_W(0013420332420), /* ANDCM */
+    DAS_W(0013611234253), /* AOBJN */
+    DAS_W(0013611240252), /* AOBJP */
+    DAS_W(0013650712345), /* AOJGE */
+    DAS_W(0013651412343), /* AOJLE */
+    DAS_W(0013714712355), /* AOSGE */
+    DAS_W(0013715412353), /* AOSLE */
+    DAS_W(0030244712305), /* CAIGE */
+    DAS_W(0030245412303), /* CAILE */
+    DAS_W(0030264712315), /* CAMGE */
+    DAS_W(0030265412313), /* CAMLE */
+    DAS_W(0033024144400), /* CLEAR */
+    DAS_W(0043276613120), /* DMOVE */
+    DAS_W(0043276635121), /* DMOVN */
+    DAS_W(0060222205147), /* FADRB */
+    DAS_W(0060222223145), /* FADRI */
+    DAS_W(0060222231145), /* FADRL */
+    DAS_W(0060222233146), /* FADRM */
+    DAS_W(0061132205177), /* FDVRB */
+    DAS_W(0061132223175), /* FDVRI */
+    DAS_W(0061132231175), /* FDVRL */
+    DAS_W(0061132233176), /* FDVRM */
+    DAS_W(0063302205167), /* FMPRB */
+    DAS_W(0063302223165), /* FMPRI */
+    DAS_W(0063302231165), /* FMPRL */
+    DAS_W(0063302233166), /* FMPRM */
+    DAS_W(0064612205157), /* FSBRB */
+    DAS_W(0064612223155), /* FSBRI */
+    DAS_W(0064612231155), /* FSBRL */
+    DAS_W(0064612233156), /* FSBRM */
+    DAS_W(0103060522531), /* HLLEI */
+    DAS_W(0103060532532), /* HLLEM */
+    DAS_W(0103060546533), /* HLLES */
+    DAS_W(0103061722521), /* HLLOI */
+    DAS_W(0103061732522), /* HLLOM */
+    DAS_W(0103061746523), /* HLLOS */
+    DAS_W(0103063222511), /* HLLZI */
+    DAS_W(0103063232512), /* HLLZM */
+    DAS_W(0103063246513), /* HLLZS */
+    DAS_W(0103110522575), /* HLREI */
+    DAS_W(0103110532576), /* HLREM */
+    DAS_W(0103110546577), /* HLRES */
+    DAS_W(0103111722565), /* HLROI */
+    DAS_W(0103111732566), /* HLROM */
+    DAS_W(0103111746567), /* HLROS */
+    DAS_W(0103113222555), /* HLRZI */
+    DAS_W(0103113232556), /* HLRZM */
+    DAS_W(0103113246557), /* HLRZS */
+    DAS_W(0104460522535), /* HRLEI */
+    DAS_W(0104460532536), /* HRLEM */
+    DAS_W(0104460546537), /* HRLES */
+    DAS_W(0104461722525), /* HRLOI */
+    DAS_W(0104461732526), /* HRLOM */
+    DAS_W(0104461746527), /* HRLOS */
+    DAS_W(0104463222515), /* HRLZI */
+    DAS_W(0104463232516), /* HRLZM */
+    DAS_W(0104463246517), /* HRLZS */
+    DAS_W(0104510522571), /* HRREI */
+    DAS_W(0104510532572), /* HRREM */
+    DAS_W(0104510546573), /* HRRES */
+    DAS_W(0104511722561), /* HRROI */
+    DAS_W(0104511732562), /* HRROM */
+    DAS_W(0104511746563), /* HRROS */
+    DAS_W(0104513222551), /* HRRZI */
+    DAS_W(0104513232552), /* HRRZM */
+    DAS_W(0104513246553), /* HRRZS */
+    DAS_W(0111046604233), /* IDIVB */
+    DAS_W(0111046622231), /* IDIVI */
+    DAS_W(0111046632232), /* IDIVM */
+    DAS_W(0113325404223), /* IMULB */
+    DAS_W(0113325422221), /* IMULI */
+    DAS_W(0113325432222), /* IMULM */
+    DAS_W(0125266002324), /* JUMPA */
+    DAS_W(0125266012322), /* JUMPE */
+    DAS_W(0125266016327), /* JUMPG */
+    DAS_W(0125266030321), /* JUMPL */
+    DAS_W(0125266034326), /* JUMPN */
+    DAS_W(0153730522201), /* MOVEI */
+    DAS_W(0153730532202), /* MOVEM */
+    DAS_W(0153730546203), /* MOVES */
+    DAS_W(0153731522215), /* MOVMI */
+    DAS_W(0153731532216), /* MOVMM */
+    DAS_W(0153731546217), /* MOVMS */
+    DAS_W(0153731622211), /* MOVNI */
+    DAS_W(0153731632212), /* MOVNM */
+    DAS_W(0153731646213), /* MOVNS */
+    DAS_W(0153732322205), /* MOVSI */
+    DAS_W(0153732332206), /* MOVSM */
+    DAS_W(0153732346207), /* MOVSS */
+    DAS_W(0174414104457), /* ORCAB */
+    DAS_W(0174414122455), /* ORCAI */
+    DAS_W(0174414132456), /* ORCAM */
+    DAS_W(0174414204473), /* ORCBB */
+    DAS_W(0174414222471), /* ORCBI */
+    DAS_W(0174414232472), /* ORCBM */
+    DAS_W(0174415504467), /* ORCMB */
+    DAS_W(0174415522465), /* ORCMI */
+    DAS_W(0174415532466), /* ORCMM */
+    DAS_W(0205315024260), /* PUSHJ */
+    DAS_W(0231320104427), /* SETAB */
+    DAS_W(0231320122425), /* SETAI */
+    DAS_W(0231320132426), /* SETAM */
+    DAS_W(0231320302450), /* SETCA */
+    DAS_W(0231320332460), /* SETCM */
+    DAS_W(0231321504417), /* SETMB */
+    DAS_W(0231321522415), /* SETMI */
+    DAS_W(0231321532416), /* SETMM */
+    DAS_W(0231321704477), /* SETOB */
+    DAS_W(0231321722475), /* SETOI */
+    DAS_W(0231321732476), /* SETOM */
+    DAS_W(0231323204403), /* SETZB */
+    DAS_W(0231323222401), /* SETZI */
+    DAS_W(0231323232402), /* SETZM */
+    DAS_W(0232646002334), /* SKIPA */
+    DAS_W(0232646012332), /* SKIPE */
+    DAS_W(0232646016337), /* SKIPG */
+    DAS_W(0232646030331), /* SKIPL */
+    DAS_W(0232646034336), /* SKIPN */
+    DAS_W(0233650712365), /* SOJGE */
+    DAS_W(0233651412363), /* SOJLE */
+    DAS_W(0233714712375), /* SOSGE */
+    DAS_W(0233715412373) /* SOSLE */
+};
+static const das_word_t das_op_six[DAS_OP_SIX_COUNT] = {
+    DAS_W(0000270406042), /* ANDCAB */
+    DAS_W(0000270406051), /* ANDCAI */
+    DAS_W(0000270406055), /* ANDCAM */
+    DAS_W(0000270406102), /* ANDCBB */
+    DAS_W(0000270406111), /* ANDCBI */
+    DAS_W(0000270406115), /* ANDCBM */
+    DAS_W(0000270406642), /* ANDCMB */
+    DAS_W(0000270406651), /* ANDCMI */
+    DAS_W(0000270406655), /* ANDCMM */
+    DAS_W(0000660503102), /* CLEARB */
+    DAS_W(0000660503111), /* CLEARI */
+    DAS_W(0000660503115), /* CLEARM */
+    DAS_W(0001065754255), /* DMOVEM */
+    DAS_W(0001065754715), /* DMOVNM */
+    DAS_W(0001342412704), /* EXTEND */
+    DAS_W(0002525540345), /* JUMPGE */
+    DAS_W(0002525540605), /* JUMPLE */
+    DAS_W(0004626406042), /* SETCAB */
+    DAS_W(0004626406051), /* SETCAI */
+    DAS_W(0004626406055), /* SETCAM */
+    DAS_W(0004626406642), /* SETCMB */
+    DAS_W(0004626406651), /* SETCMI */
+    DAS_W(0004626406655), /* SETCMM */
+    DAS_W(0004655140345), /* SKIPGE */
+    DAS_W(0004655140605), /* SKIPLE */
+    DAS_W(0006065754251) /* XMOVEI */
+};
+#endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
-static const das_word_t das_op_info[] = {
-    DAS_W(001341010340),
-    DAS_W(001640500251),
-    DAS_W(001400621131),
-    DAS_W(001160276444),
-    DAS_W(004602361122),
-    DAS_W(004702321132),
-    DAS_W(002401310504),
-    DAS_W(002600266434),
-    DAS_W(001334554265),
-    DAS_W(001320272242),
-    DAS_W(005274450437),
-    DAS_W(002165074262),
-    DAS_W(001204740370),
-    DAS_W(001361520610),
-    DAS_W(003341460641),
-    DAS_W(003005542621),
-    DAS_W(003201400660),
-    DAS_W(003101522611),
-    DAS_W(003345463130),
-    DAS_W(001271060273),
-    DAS_W(001344564407),
-    DAS_W(002025014344),
-    DAS_W(001610716341),
-    DAS_W(001630730352),
-    DAS_W(001674722356),
-    DAS_W(001220610302),
-    DAS_W(001434602306),
-    DAS_W(001460624317),
-    DAS_W(001444635114),
-    DAS_W(004476221113),
-    DAS_W(004452222237),
-    DAS_W(001164475116),
-    DAS_W(004465116445),
-    DAS_W(002230521143),
-    DAS_W(004606305144),
-    DAS_W(004756363172),
-    DAS_W(004762255127),
-    DAS_W(004716343162),
-    DAS_W(004722327151),
-    DAS_W(004652330254),
-    DAS_W(002541202502),
-    DAS_W(002501206510),
-    DAS_W(002761312546),
-    DAS_W(002721316554),
-    DAS_W(002561212506),
-    DAS_W(002521216514),
-    DAS_W(002741302542),
-    DAS_W(002701306550),
-    DAS_W(001140274134),
-    DAS_W(001101076435),
-    DAS_W(002170532243),
-    DAS_W(001260640246),
-    DAS_W(001000430210),
-    DAS_W(001020456225),
-    DAS_W(001131130470),
-    DAS_W(002320546261),
-    DAS_W(001225050414),
-    DAS_W(002361000330),
-    DAS_W(001720744367),
-    DAS_W(001704754374),
-    DAS_W(001750776371),
-    DAS_W(001770576275),
-    DAS_W(001371530652),
-    DAS_W(003271430612),
-    DAS_W(003071570672),
-    DAS_W(003371470632),
-    DAS_W(003171512643),
-    DAS_W(003235412603),
-    DAS_W(003035552663),
-    DAS_W(003335452623),
-    DAS_W(003135510642),
-    DAS_W(003231410602),
-    DAS_W(003031550662),
-    DAS_W(003331450622),
-    DAS_W(003131532653),
-    DAS_W(003275432613),
-    DAS_W(003075572673),
-    DAS_W(003375472633),
-    DAS_W(003175066431),
-    DAS_W(002150266105),
-    DAS_W(002041100420),
-    DAS_W(001254524345),
-    DAS_W(001614732353),
-    DAS_W(001424606315),
-    DAS_W(001455001120),
-    DAS_W(004506317145),
-    DAS_W(004626315177),
-    DAS_W(004766373176),
-    DAS_W(004736353165),
-    DAS_W(004732337155),
-    DAS_W(004666334531),
-    DAS_W(002551266521),
-    DAS_W(002511246511),
-    DAS_W(002451226575),
-    DAS_W(002771376565),
-    DAS_W(002731356555),
-    DAS_W(002671336535),
-    DAS_W(002571276525),
-    DAS_W(002531256515),
-    DAS_W(002471236571),
-    DAS_W(002751366561),
-    DAS_W(002711346551),
-    DAS_W(002651326233),
-    DAS_W(001144464223),
-    DAS_W(001104444324),
-    DAS_W(001510656321),
-    DAS_W(001530402202),
-    DAS_W(001014432216),
-    DAS_W(001074422212),
-    DAS_W(001054412206),
-    DAS_W(001035136455),
-    DAS_W(002271166471),
-    DAS_W(002351156465),
-    DAS_W(002330540427),
-    DAS_W(002125054450),
-    DAS_W(002301036415),
-    DAS_W(002071176475),
-    DAS_W(002371006401),
-    DAS_W(002010670332),
-    DAS_W(001574662336),
-    DAS_W(001724746375),
-    DAS_W(001755026411),
-    DAS_W(002051106441),
-    DAS_W(002211046421),
-    DAS_W(002111006401),
-    DAS_W(002012251125),
-    DAS_W(004514652323),
-    DAS_W(002255122452),
-    DAS_W(002315142462),
-    DAS_W(001564667201)
+static const das_word_t das_op_info_six[] = {
+    DAS_W(0002055022412),
+    DAS_W(0002215102442),
+    DAS_W(0002115042422),
+    DAS_W(0002015002402),
+    DAS_W(0004522253123),
+    DAS_W(0001524646453),
+    DAS_W(0002245124463),
+    DAS_W(0002305144335),
+    DAS_W(0001556402000)
 };
 #elif DAS_ENABLE_OPTIMIZER
 /* Pass 1 needs exact skip classification, but not the complete opcode
@@ -889,35 +1170,93 @@ static int lookup_op_mn(das_word_t m, int *nonbase)
     return -1;
 }
 #else
-static int lookup_op_mn(das_word_t m, int *nonbase)
+/* Convert the exactly matched mnemonic alphabet to five bits per
+ * letter.  Leading punctuation/digits are still ignored as before. */
+static das_word_t mnemonic_key5(const char *s)
+{
+    das_word_t w;
+    unsigned int n;
+
+    w = DAS_W(0);
+    n = 0U;
+    while (*s != 0 && n < 6U) {
+        unsigned int ch;
+
+        ch = (unsigned int)(unsigned char)*s++;
+        if (ch >= 'a' && ch <= 'z')
+            ch -= 'a' - 'A';
+        if (ch >= 'A' && ch <= 'Z') {
+            w = (w << 5U) | (das_word_t)(ch - 'A' + 1U);
+            n++;
+        }
+    }
+    return w;
+}
+
+static int lookup_op_key5(das_word_t m, int *nonbase)
 {
     unsigned int lo;
     unsigned int hi;
     unsigned int mid;
-    unsigned int shift;
-    das_word_t info;
+    das_word_t entry;
+    das_word_t key;
+    unsigned int info;
 
     lo = 0U;
     hi = DAS_OP_COUNT;
     while (lo < hi) {
         mid = lo + (hi - lo) / 2U;
-        if (m < das_op_mn[mid])
+        if (mid < DAS_OP_COMPACT_COUNT) {
+            entry = das_op_compact[mid];
+            key = entry >> 10U;
+        } else {
+            key = das_op_six[mid - DAS_OP_COMPACT_COUNT];
+        }
+        if (m < key)
             hi = mid;
-        else if (m > das_op_mn[mid])
+        else if (m > key)
             lo = mid + 1U;
         else {
-            shift = (2U - (mid % DAS_OP_INFO_PER_WORD)) * 10U;
-            info = (das_op_info[mid / DAS_OP_INFO_PER_WORD] >> shift) &
-                DAS_W(01777);
+            if (mid < DAS_OP_COMPACT_COUNT)
+                info = (unsigned int)(entry & DAS_W(01777));
+            else {
+                unsigned int index;
+                unsigned int shift;
+
+                index = mid - DAS_OP_COMPACT_COUNT;
+                shift = (2U - index % DAS_OP_INFO_PER_WORD) * 10U;
+                info = (unsigned int)((das_op_info_six[
+                    index / DAS_OP_INFO_PER_WORD] >> shift) & DAS_W(01777));
+            }
             if (nonbase != 0)
-                *nonbase = (info & DAS_W(01000)) != DAS_W(0);
-            return (int)(info & DAS_W(0777));
+                *nonbase = (info & 01000U) != 0U;
+            return (int)(info & 0777U);
         }
     }
     if (nonbase != 0)
         *nonbase = 0;
     return -1;
 }
+#ifndef DAS_NATIVE
+/* Host-side optimizer and macro validation still pass six-bit packed
+ * mnemonic values to lookup_op_mn().  Preserve that interface and
+ * convert to the new five-bit key only at this boundary.  Native
+ * phase 2 calls lookup_op_key5() directly without resident overhead. */
+static int lookup_op_mn(das_word_t m, int *nonbase)
+{
+    das_word_t key;
+    unsigned int shift;
+
+    key = DAS_W(0);
+    shift = 0U;
+    while (m != DAS_W(0)) {
+        key |= (m & DAS_W(077)) << shift;
+        m >>= 6U;
+        shift += 5U;
+    }
+    return lookup_op_key5(key, nonbase);
+}
+#endif
 #endif
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static das_word_t das_enc_mem(unsigned int op, unsigned int ac, int ind, int xr, unsigned int y) { return das_mask36(((das_word_t)op << 27) | ((das_word_t)(ac & 017) << 23) | ((das_word_t)(ind & 1) << 22) | ((das_word_t)(xr & 017) << 18) | (y & DAS_HALF_MASK)); }
@@ -1786,10 +2125,11 @@ static int lookup_op(const char *s, int *nonbase)
     das_word_t m;
     int op;
 
-    m = sixbit_mn(s);
-    op = lookup_op_mn(m, nonbase);
+    m = mnemonic_key5(s);
+    op = lookup_op_key5(m, nonbase);
     if (op >= 0)
         return op;
+    m = sixbit_mn(s);
     op = lookup_extra_op_mn(m);
     if (op >= 0 && nonbase != 0)
         *nonbase = 1;

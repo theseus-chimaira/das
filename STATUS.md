@@ -1,5 +1,16 @@
 # DAS current status
 
+## 2026-11-23 v1877: packed phase-2 opcode metadata, image gate OPEN
+
+The complete 390-opcode table has been preserved while the 364 three-
+through five-letter native phase-2 entries combine compressed name
+keys and opcode/nonbase metadata. The 26 six-letter entries retain
+exact separate decoding. The frozen independent 390-opcode test oracle
+passes. Native image sizes are **034101** (DAS1) and **031037** (DAS2),
+with BSS **001655/001346**. The strict 034000/031000 image ceilings
+remain exceeded by **000101/000037**. Both full-process ceilings pass;
+physical guest acceptance is still open.
+
 ## 2026-11-23 v1876: scratch path BSS and diagnostic fix; image gate OPEN
 
 Native DAS1/DAS2 images are **034101/031117** octal words. BSS is now
