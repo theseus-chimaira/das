@@ -189,25 +189,22 @@ static int das_read_line(struct das_char_reader *r, char *line,
         if (rc == DAS_INPUT_EOF) {
             if (n == 0U && !long_line)
                 return DAS_INPUT_EOF;
-            line[n] = 0;
-            if (!long_line)
-                das_strip_c_comments(line, &r->cstate);
-            return long_line ? DAS_INPUT_TOOLONG : DAS_INPUT_OK;
+            break;
         }
         ch &= 0177U;
-        if (ch == '\n') {
-            line[n] = 0;
-            if (!long_line)
-                das_strip_c_comments(line, &r->cstate);
-            return long_line ? DAS_INPUT_TOOLONG : DAS_INPUT_OK;
-        }
-        if (!long_line) {
-            if (n + 1U < cap)
-                line[n++] = (char)ch;
-            else
-                long_line = 1;
-        }
+        if (ch == '\n')
+            break;
+        /* Once cap is exhausted, n remains cap-1.  The capacity
+         * comparison itself keeps later characters out of the buffer. */
+        if (n < cap - 1U)
+            line[n++] = (char)ch;
+        else
+            long_line = 1;
     }
+    line[n] = 0;
+    if (!long_line)
+        das_strip_c_comments(line, &r->cstate);
+    return long_line ? DAS_INPUT_TOOLONG : DAS_INPUT_OK;
 }
 
 static int das_s6_get(void *arg, unsigned int *ch)
