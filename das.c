@@ -7235,84 +7235,62 @@ static int emit_byte_directive(struct asmctx *c, char *p, unsigned int dot,
     }
     return 0;
 }
-static int emit_sixbit_directive(char *p, unsigned int dot,
-                                 struct das_output *out,
-                                 unsigned int maxwords)
+/* Pack SIXBIT and seven-bit text directly into complete output words.
+ * A full-width SIXBIT word has six characters; a seven-bit text word
+ * has five characters and one unused low bit.  The caller's pass-1
+ * count already includes the minimum word and ASCIZ terminator.
+ */
+static int emit_text_directive(char *p, unsigned int dot,
+                               struct das_output *out,
+                               unsigned int maxwords, unsigned int bits)
 {
-    char *q, *a, *b;
-    int len, ci;
+    char *q;
+    char *text;
+    unsigned int perword;
     unsigned int wi;
+    int len;
 
     q = skipws(p);
-    if (*q == '.') q++;
-    if (pref_i(q, "SIXBIT", 6)) q = skipws(q + 6);
-    if (delimited_text_len(q, &len) != 0) return -1;
-    a = q + 1;
-    b = strrchr(a, *q);
-    (void)b;
-    if (len <= 0) len = 1;
+    if (*q == '.')
+        q++;
+    if (bits == 6U) {
+        if (pref_i(q, "SIXBIT", 6))
+            q = skipws(q + 6);
+    } else if (pref_i(q, "ASCIZ", 5))
+        q = skipws(q + 5);
+    else if (pref_i(q, "ASCII", 5))
+        q = skipws(q + 5);
+    if (delimited_text_len(q, &len) != 0)
+        return -1;
+    text = q + 1;
+    perword = 36U / bits;
     for (wi = 0U; wi < maxwords; wi++) {
-        das_word_t w;
+        unsigned int slot;
+        das_word_t word;
 
-        w = DAS_W(0);
-        for (ci = 0; ci < 6; ci++) {
-            int pos;
-            unsigned int c;
-            unsigned char ch;
+        word = DAS_W(0);
+        for (slot = 0U; slot < perword; slot++) {
+            unsigned int pos;
+            unsigned int ch;
 
-            pos = (int)(wi * 6U) + ci;
-            c = 0U;
-            if (pos < len) {
-                ch = (unsigned char)a[pos];
-                if (ch >= 'a' && ch <= 'z') ch = (unsigned char)(ch - 'a' + 'A');
-                if (ch >= ' ' && ch <= '_') c = (unsigned int)(ch - ' ');
+            pos = wi * perword + slot;
+            ch = 0U;
+            if (pos < (unsigned int)len) {
+                ch = (unsigned int)(unsigned char)text[pos];
+                if (bits == 6U) {
+                    if (ch >= 'a' && ch <= 'z')
+                        ch -= 'a' - 'A';
+                    ch = ch >= ' ' && ch <= '_' ? ch - ' ' : 0U;
+                } else
+                    ch &= 0177U;
             }
-            w = (w << 6) | (das_word_t)(c & 077U);
+            word = (word << bits) | (das_word_t)ch;
         }
-        if (output_emit(out, dot + wi, w, 0) != 0)
+        if (bits == 7U)
+            word <<= 1U;
+        if (output_emit(out, dot + wi, word, 0) != 0)
             return -1;
     }
-    return 0;
-}
-static int emit_ascii_directive(char *p, unsigned int dot,
-                                struct das_output *out,
-                                unsigned int maxwords, int zterm)
-{
-    char *q, *a, *b;
-    int len, i, outlen, used;
-    unsigned int wi;
-    das_word_t word;
-
-    used = 0;
-    wi = 0U;
-    word = DAS_W(0);
-    q = skipws(p);
-    if (*q == '.') q++;
-    if (pref_i(q, "ASCIZ", 5)) q = skipws(q + 5);
-    else if (pref_i(q, "ASCII", 5)) q = skipws(q + 5);
-    if (delimited_text_len(q, &len) != 0) return -1;
-    a = q + 1;
-    b = strrchr(a, *q);
-    (void)b;
-    outlen = len + (zterm ? 1 : 0);
-    if (outlen <= 0) outlen = 1;
-    for (i = 0; i < outlen; i++) {
-        unsigned int ch;
-
-        ch = 0U;
-        if (i < len) ch = (unsigned char)a[i];
-        if (used + 7 > 36) {
-            if (wi >= maxwords || output_emit(out, dot + wi, word, 0) != 0)
-                return -1;
-            wi++;
-            word = DAS_W(0);
-            used = 0;
-        }
-        word |= ((das_word_t)(ch & 0177U)) << (36 - used - 7);
-        used += 7;
-    }
-    if (wi >= maxwords || output_emit(out, dot + wi, word, 0) != 0)
-        return -1;
     return 0;
 }
 static int parse_instruction_word(struct asmctx *c, char *p, unsigned int dot, das_word_t *w, int *reloc, int allow_empty) {
@@ -7535,11 +7513,11 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
     case DAS_TOK_BYTE:
         return emit_byte_directive(c, parsed->stmt, dot, out, nwords);
     case DAS_TOK_ASCII:
-        return emit_ascii_directive(parsed->stmt, dot, out, nwords, 0);
+        return emit_text_directive(parsed->stmt, dot, out, nwords, 7U);
     case DAS_TOK_ASCIZ:
-        return emit_ascii_directive(parsed->stmt, dot, out, nwords, 1);
+        return emit_text_directive(parsed->stmt, dot, out, nwords, 7U);
     case DAS_TOK_SIXBIT:
-        return emit_sixbit_directive(parsed->stmt, dot, out, nwords);
+        return emit_text_directive(parsed->stmt, dot, out, nwords, 6U);
     case DAS_TOK_LONG:
         return emit_long_directive(c, parsed->stmt, dot, out, nwords);
     case DAS_TOK_WORD:
