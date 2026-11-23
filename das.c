@@ -3673,21 +3673,24 @@ static struct expr_value parse_expr_unary(struct expr_state *st)
 
 static int expr_binary_op(char *p, int *op, int *prec, int *width)
 {
-    if (*p == '|') { *op = EXPR_OP_OR;  *prec = 1; *width = 1; return 1; }
-    if (*p == '^') { *op = EXPR_OP_XOR; *prec = 2; *width = 1; return 1; }
-    if (*p == '&') { *op = EXPR_OP_AND; *prec = 3; *width = 1; return 1; }
-    if (p[0] == '<' && p[1] == '<') {
+    *width = 1;
+    switch (*p) {
+    case '|': *op = EXPR_OP_OR;  *prec = 1; return 1;
+    case '^': *op = EXPR_OP_XOR; *prec = 2; return 1;
+    case '&': *op = EXPR_OP_AND; *prec = 3; return 1;
+    case '<':
+        if (p[1] != '<') return 0;
         *op = EXPR_OP_SHL; *prec = 4; *width = 2; return 1;
-    }
-    if (p[0] == '>' && p[1] == '>') {
+    case '>':
+        if (p[1] != '>') return 0;
         *op = EXPR_OP_SHR; *prec = 4; *width = 2; return 1;
+    case '+': *op = EXPR_OP_ADD; *prec = 5; return 1;
+    case '-': *op = EXPR_OP_SUB; *prec = 5; return 1;
+    case '*': *op = EXPR_OP_MUL; *prec = 6; return 1;
+    case '/': *op = EXPR_OP_DIV; *prec = 6; return 1;
+    case '%': *op = EXPR_OP_REM; *prec = 6; return 1;
+    default: return 0;
     }
-    if (*p == '+') { *op = EXPR_OP_ADD; *prec = 5; *width = 1; return 1; }
-    if (*p == '-') { *op = EXPR_OP_SUB; *prec = 5; *width = 1; return 1; }
-    if (*p == '*') { *op = EXPR_OP_MUL; *prec = 6; *width = 1; return 1; }
-    if (*p == '/') { *op = EXPR_OP_DIV; *prec = 6; *width = 1; return 1; }
-    if (*p == '%') { *op = EXPR_OP_REM; *prec = 6; *width = 1; return 1; }
-    return 0;
 }
 
 static struct expr_value parse_expr_binary(struct expr_state *st, int minprec)
