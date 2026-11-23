@@ -1953,20 +1953,33 @@ static int wordfile_seek(struct das_wordfile *wf, unsigned int word)
 #endif
     return fseek(wf->file, off, SEEK_SET) == 0 ? 0 : -1;
 }
-static int wordfile_write(struct das_wordfile *wf,
-                          const das_word_t *words, unsigned int count)
-{
 #ifdef DAS_NATIVE
+/* Both native scratch I/O directions use the same short-transfer loop.
+ * The source buffer is immutable on writes; the read path fills it.
+ * Keep the host's byte-stream serialization separate. */
+static int wordfile_transfer(FILE *file, das_word_t *words,
+                             unsigned int count, int output)
+{
     while (count != 0U) {
         int rc;
 
-        rc = dsys_write_words(wf->file->fd, (kword_t *)words, count);
+        if (output)
+            rc = dsys_write_words(file->fd, (kword_t *)words, count);
+        else
+            rc = dsys_read_words(file->fd, (kword_t *)words, count);
         if (rc <= 0)
             return -1;
         words += (unsigned int)rc;
         count -= (unsigned int)rc;
     }
     return 0;
+}
+#endif
+static int wordfile_write(struct das_wordfile *wf,
+                          const das_word_t *words, unsigned int count)
+{
+#ifdef DAS_NATIVE
+    return wordfile_transfer(wf->file, (das_word_t *)words, count, 1);
 #else
     unsigned int i;
     unsigned char raw[DAS_WORD_INPUT_BUFFER * 8U];
@@ -2000,16 +2013,7 @@ static int wordfile_read_words(struct das_wordfile *wf,
                                das_word_t *words, unsigned int count)
 {
 #ifdef DAS_NATIVE
-    while (count != 0U) {
-        int rc;
-
-        rc = dsys_read_words(wf->file->fd, (kword_t *)words, count);
-        if (rc <= 0)
-            return -1;
-        words += (unsigned int)rc;
-        count -= (unsigned int)rc;
-    }
-    return 0;
+    return wordfile_transfer(wf->file, words, count, 0);
 #else
     unsigned char raw[DAS_WORD_INPUT_BUFFER * 8U];
 
@@ -4049,7 +4053,7 @@ static int parse_ea(struct asmctx *c, char *s, unsigned int dot, unsigned int *y
         c->eval_symbol = 0U;
         c->eval_addend = (das_word_t)*y;
     }
-    return 0; } if (pref_i(s, "POINT", 5) && isspace((unsigned char)s[5])) { char *c1, *c2; s = skipws(s + 5); c1 = strchr(s, ','); if (!c1) return -1; c2 = strchr(c1 + 1, ','); if (c2) *c2 = 0; return parse_ea(c, skipws(c1 + 1), dot, y, ind, xr, reloc); } (void)parse_index_suffix(s, xr); rtrim(s); if (!*s) { *y = 0; *reloc = 0; return 0; } if (eval_expr_octal(c, s, dot, &v, reloc) != 0) return -1; *y = DAS_MASK18(v); return 0; }
+    return 0; } if (pref_i(s, "POINT", 5) && isspace((unsigned char)s[5])) { char *c1, *c2; s = skipws(s + 5); c1 = strchr(s, ','); if (!c1) return -1; c2 = strchr(c1 + 1, ','); if (c2) *c2 = 0; return parse_ea(c, skipws(c1 + 1), dot, y, ind, xr, reloc); } (void)parse_index_suffix(s, xr); if (!*s) { *y = 0; *reloc = 0; return 0; } if (eval_expr_octal(c, s, dot, &v, reloc) != 0) return -1; *y = DAS_MASK18(v); return 0; }
 #endif
 
 static char *byte_field_end(char *p)
@@ -6363,6 +6367,13 @@ static int write_words_host(FILE *f, const das_word_t *words,
                             unsigned int count)
 {
 #ifdef DAS_NATIVE
+#if defined(DAS_NATIVE_PHASE2_ONLY)
+    /* The output stream and scratch wordfiles share the same native
+     * partial-write contract, including short writes and errors. */
+    return wordfile_transfer(f, (das_word_t *)words, count, 1);
+#else
+    /* Phase 1 retains the smaller direct writer; sharing this third
+     * caller increases its native image even though phase 2 shrinks. */
     while (count != 0U) {
         int rc;
 
@@ -6373,6 +6384,7 @@ static int write_words_host(FILE *f, const das_word_t *words,
         count -= (unsigned int)rc;
     }
     return 0;
+#endif
 #else
     unsigned char raw[DAS_OUTPUT_BUFFER_WORDS * 8U];
 
@@ -7296,14 +7308,20 @@ static int emit_text_directive(char *p, unsigned int dot,
 static int parse_instruction_word(struct asmctx *c, char *p, unsigned int dot, das_word_t *w, int *reloc, int allow_empty) {
     char mnem[32], *q, *rest, *a, *b;
     int i = 0, op, ind, xr, rel;
+    int limit = 31;
     unsigned int ac = 0, y;
     q = skipws(p);
     if (!isname0((unsigned char)*q)) return 0;
-    while (*q && !isspace((unsigned char)*q)) { if (i < 31) mnem[i++] = *q; q++; }
+    /* Drop the optional pseudo-op dot while copying the mnemonic,
+     * retaining the original 31-character input truncation boundary. */
+    if (*q == '.') { q++; limit--; }
+    while (*q && !isspace((unsigned char)*q)) {
+        if (i < limit) mnem[i++] = *q;
+        q++;
+    }
     mnem[i] = 0;
     rest = skipws(q);
     if (!*rest && !allow_empty) return 0;
-    if (mnem[0] == '.') memmove(mnem, mnem + 1, strlen(mnem));
     op = lookup_op(mnem, 0);
     if (op < 0) {
         unsigned int alias_op;

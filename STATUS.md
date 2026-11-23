@@ -1,5 +1,16 @@
 # DAS current status
 
+## 2026-11-23 v1868: native I/O and operand savings, size gate OPEN
+
+Native DAS1/DAS2 images now measure **034114/031161** octal words,
+with unchanged BSS **002103/001573** and unchanged mandatory ceilings
+**034000/031000**. Both image limits still fail, by **000114/000161**.
+V1865-v1868 remove redundant dotted mnemonic copying and effective
+address trimming and consolidate native partial scratch-file transfers;
+phase 2 also uses the common transfer path for output writes. The
+experimental shared quotient/remainder sign correction was rejected
+because it grew both images. Native guest acceptance remains open.
+
 ## 2026-11-23 v1864: further measured reductions, phase gate still OPEN
 
 Current KCC/PDP-6 source-built phase images are **034135/031253**

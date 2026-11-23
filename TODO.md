@@ -4,8 +4,8 @@
 
 The 68-instruction comment scanner and native 64-word scratch-backed
 relocation bitmap have prior independent acceptance. The CURRENT
-v1864 KCC-built DAS1/DAS2 phase images are 034135/031253 octal words,
-still above the unchanged 034000/031000 ceilings by 000135/000253.
+v1868 KCC-built DAS1/DAS2 phase images are 034114/031161 octal words,
+still above the unchanged 034000/031000 ceilings by 000114/000161.
 Continue shrinking both images without increasing BSS or relaxing the
 limits, then repeat the strict phase-image checker and native guest
 acceptance. Earlier phase-image passes were historical compiler states.
