@@ -4140,6 +4140,32 @@ static int long_word_count(char *arg)
 static int eval_abs_u(struct asmctx *c, char *arg, unsigned int dot,
                       das_word_t limit, unsigned int *value);
 
+/* Parse the parenthesized width used by the first and later BYTE
+ * fields.  Both use exactly the same absolute 1..36-bit rule and must
+ * restore the closing delimiter even when evaluation fails. */
+static int byte_paren_size(struct asmctx *c, char *p, unsigned int dot,
+                           char **next, int *size)
+{
+    char *end;
+    char save;
+    unsigned int value;
+
+    end = strchr(p + 1, ')');
+    if (end == 0)
+        return -1;
+    save = *end;
+    *end = 0;
+    if (eval_abs_u(c, p + 1, dot, DAS_W(36), &value) != 0 ||
+        value == 0U) {
+        *end = save;
+        return -1;
+    }
+    *end = save;
+    *size = (int)value;
+    *next = skipws(end + 1);
+    return 0;
+}
+
 static int byte_begin(struct asmctx *c, char *p, unsigned int dot,
                       char **next, int *size)
 {
@@ -4159,22 +4185,8 @@ static int byte_begin(struct asmctx *c, char *p, unsigned int dot,
      * Parse the first size here because byte_size_prefix() only
      * handles additional fields after byte_begin() has succeeded.
      */
-    if (*p == '(') {
-        end = strchr(p + 1, ')');
-        if (end == 0)
-            return -1;
-        save = *end;
-        *end = 0;
-        if (eval_abs_u(c, p + 1, dot, DAS_W(36), &value) != 0 ||
-            value == 0U) {
-            *end = save;
-            return -1;
-        }
-        *end = save;
-        *size = (int)value;
-        *next = skipws(end + 1);
-        return 0;
-    }
+    if (*p == '(')
+        return byte_paren_size(c, p, dot, next, size);
     end = p;
     while (*end != 0 && *end != ',' && !isspace((unsigned char)*end))
         end++;
@@ -4199,29 +4211,13 @@ static int byte_size_prefix(struct asmctx *c, char **next, unsigned int dot,
                             int *size)
 {
     char *p;
-    char *end;
-    char save;
-    unsigned int value;
 
     p = skipws(*next);
     if (*p != '(') {
         *next = p;
         return 0;
     }
-    p++;
-    end = strchr(p, ')');
-    if (end == 0)
-        return -1;
-    save = *end;
-    *end = 0;
-    if (eval_abs_u(c, p, dot, DAS_W(36), &value) != 0 || value == 0U) {
-        *end = save;
-        return -1;
-    }
-    *end = save;
-    *size = (int)value;
-    *next = skipws(end + 1);
-    return 0;
+    return byte_paren_size(c, p, dot, next, size);
 }
 
 static int byte_word_count(struct asmctx *c, char *arg, unsigned int dot) {
