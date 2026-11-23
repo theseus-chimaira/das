@@ -2843,23 +2843,15 @@ static void das_format_octal(char *out, das_word_t value)
     *p = 0;
 }
 
-static void set_snapshot_name(unsigned int generation, char *name,
-                              unsigned int cap)
+/* All snapshot callers provide at least DAS_MAX_NAME+1 bytes (40).
+ * The seven-character prefix plus an unsigned 36-bit decimal generation
+ * needs no more than 18 bytes including its terminator.  Format directly
+ * into the caller's buffer, without an intermediate name and copy.
+ */
+static void set_snapshot_name(unsigned int generation, char *name)
 {
-    char num[16];
-    unsigned int used;
-    unsigned int n;
-
-    if (cap == 0U)
-        return;
-    strcopy(name, "%$DAS$S", cap);
-    used = (unsigned int)strlen(name);
-    n = das_format_u10(num, generation);
-    if (used + n >= cap)
-        n = cap - 1U - used;
-    if (n != 0U)
-        memcpy(name + used, num, n);
-    name[used + n] = 0;
+    memcpy(name, "%$DAS$S", 7U);
+    (void)das_format_u10(name + 7, generation);
 }
 
 static int set_snapshot_lookup(struct asmctx *c, const struct sym *set_sym,
@@ -2873,7 +2865,7 @@ static int set_snapshot_lookup(struct asmctx *c, const struct sym *set_sym,
     generation = (unsigned int)(set_sym->off & DAS_HALF_MASK);
     if (generation == 0U || generation > c->set_serial)
         return 0;
-    set_snapshot_name(generation, name, sizeof(name));
+    set_snapshot_name(generation, name);
     if (!find_sym(c, name, snapshot))
         return 0;
     return (snapshot->sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_EQU;
@@ -2884,7 +2876,7 @@ static void set_snapshot_define(struct asmctx *c, unsigned int generation,
 {
     char name[DAS_MAX_NAME + 1];
 
-    set_snapshot_name(generation, name, sizeof(name));
+    set_snapshot_name(generation, name);
     add_sym(c, name, sec | DAS_SYM_KIND_EQU, value);
 }
 
@@ -3016,7 +3008,7 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
                     rep[0] = '0';
                     das_format_octal(rep + 1, snapshot.off & DAS_WORD_MASK);
                 } else {
-                    set_snapshot_name(generation, rep, sizeof(rep));
+                    set_snapshot_name(generation, rep);
                 }
                 n = (unsigned int)strlen(rep);
                 if (used + n >= cap)
