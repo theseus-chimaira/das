@@ -6324,19 +6324,36 @@ static int parse_exind_word(struct asmctx *c, char *q, unsigned int dot,
     *reloc = 0;
     return 0;
 }
-static int owgbp_lookup(int sel, int *size, int *low) {
-    static const int tbl[][3] = {
-        {046,6,0},{047,6,6},{050,6,12},{051,6,18},{052,6,24},{053,6,30},
-        {062,7,0},{063,7,7},{064,7,14},{065,7,21},{066,7,28},
-        {055,8,0},{056,8,8},{057,8,16},{060,8,24},
-        {070,9,0},{071,9,9},{072,9,18},{073,9,27},
-        {075,18,0},{076,18,18},{0,0,0}
-    };
-    int i;
-    for (i = 0; tbl[i][0]; i++) {
-        if (tbl[i][0] == sel) { *size = tbl[i][1]; *low = tbl[i][2]; return 1; }
-    }
-    return 0;
+/* OWGBP selectors encode a byte width and slot on a word boundary.
+ * All defined selectors form five contiguous ranges.  Decode their
+ * position arithmetically instead of retaining a 3-word table entry
+ * for each individual selector in the resident phase-2 image.
+ */
+static int owgbp_lookup(int sel, int *size, int *low)
+{
+    int bits;
+    int first;
+
+    if (sel >= 046 && sel <= 053) {
+        bits = 6;
+        first = 046;
+    } else if (sel >= 062 && sel <= 066) {
+        bits = 7;
+        first = 062;
+    } else if (sel >= 055 && sel <= 060) {
+        bits = 8;
+        first = 055;
+    } else if (sel >= 070 && sel <= 073) {
+        bits = 9;
+        first = 070;
+    } else if (sel >= 075 && sel <= 076) {
+        bits = 18;
+        first = 075;
+    } else
+        return 0;
+    *size = bits;
+    *low = (sel - first) * bits;
+    return 1;
 }
 static int parse_owgbp_word(struct asmctx *c, char *q, unsigned int dot, das_word_t *w, int *reloc) {
     char *a, *b;
