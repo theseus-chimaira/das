@@ -1,5 +1,22 @@
 # DAS current status
 
+## 2026-11-23: Strict native phase image-size acceptance remains OPEN
+
+The current installed KCC/PDP-6 profile differs from the historical
+November 16 acceptance below. Source-backed size reductions through
+v1861 brought native DAS1/DAS2 to **034173/031344 octal words** with
+BSS **002103/001573**. Both remain oversized against their unchanged
+**034000/031000** image ceilings by **000173/000344**. The source
+changes share parsed directive operands, canonicalizer copies,
+conditional classification, expression addition/subtraction, and
+literal opcode normalization without increasing static BSS.
+
+The independent directive oracle and existing host fast/full suites
+cover the modified semantics. Neither this native image contract nor
+an end-to-end native DAIMOS guest run has been accepted. The older
+size-pass measurements below are historical and must not be used as
+current release evidence. Further measured reductions are required.
+
 ## 2026-11-16: Native size gate passes; guest scratch access pending
 
 The PDP-6 KCC `-O` comment reader now emits exactly **68 instructions**

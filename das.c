@@ -2915,14 +2915,18 @@ static int literal_first_token_is_operator(const char *expr, const char *end,
 {
     char name[DAS_MAX_NAME + 1];
     unsigned int n;
+    unsigned int copylen;
 
     n = (unsigned int)(end - expr);
     if (n == 0U || n > DAS_MAX_NAME)
         return 0;
-    memcpy(name, expr, n);
-    name[n] = 0;
-    if (name[0] == '.')
-        memmove(name, name + 1, strlen(name));
+    copylen = n;
+    if (*expr == '.') {
+        expr++;
+        copylen--;
+    }
+    memcpy(name, expr, copylen);
+    name[copylen] = 0;
     if (opcode_name_known(name))
         return 1;
     if ((pref_i(name, "POINT", 5) && (prefix_ok || n == 5U)) ||
@@ -2976,7 +2980,9 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
         }
         if (isname0((unsigned char)*p)) {
             const char *q;
+            const char *source;
             char name[DAS_MAX_NAME + 1];
+            char rep[DAS_MAX_NAME + 24];
             unsigned int n;
             struct sym sym;
             int replace;
@@ -2994,8 +3000,8 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
                     (sym.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_SET)
                     replace = 1;
             }
+            source = p;
             if (replace) {
-                char rep[DAS_MAX_NAME + 24];
                 struct sym snapshot;
                 unsigned int generation;
 
@@ -3008,16 +3014,12 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
                     set_snapshot_name(generation, rep);
                 }
                 n = (unsigned int)strlen(rep);
-                if (used + n >= cap)
-                    goto fail;
-                memcpy(out + used, rep, n);
-                used += n;
-            } else {
-                if (used + n >= cap)
-                    goto fail;
-                memcpy(out + used, p, n);
-                used += n;
+                source = rep;
             }
+            if (used + n >= cap)
+                goto fail;
+            memcpy(out + used, source, n);
+            used += n;
             p = q;
             first_token = 0;
             continue;
@@ -3699,11 +3701,8 @@ static struct expr_value parse_expr_binary(struct expr_state *st, int minprec)
             return a;
         st->p = p + width;
         b = parse_expr_binary(st, prec + 1);
-        if (op == EXPR_OP_ADD) {
-            if (expr_addsub(st, &a, b, 0) != 0)
-                return a;
-        } else if (op == EXPR_OP_SUB) {
-            if (expr_addsub(st, &a, b, 1) != 0)
+        if (op == EXPR_OP_ADD || op == EXPR_OP_SUB) {
+            if (expr_addsub(st, &a, b, op == EXPR_OP_SUB) != 0)
                 return a;
         } else {
             if (expr_require_abs(st, a, b) != 0)
@@ -4076,11 +4075,8 @@ static char *byte_field_end(char *p)
 }
 static char *long_values(char *p)
 {
+    /* The statement parser has already consumed LONG. */
     p = skipws(p);
-    if (*p == '.')
-        p++;
-    if (pref_i(p, "LONG", 4))
-        p = skipws(p + 4);
     return p;
 }
 
@@ -4170,11 +4166,9 @@ static int byte_begin(struct asmctx *c, char *p, unsigned int dot,
     char save;
     unsigned int value;
 
+    /* The statement parser has already consumed BYTE; p begins with
+     * either its absolute width or the MACRO-10 parenthesized width. */
     p = skipws(p);
-    if (*p == '.')
-        p++;
-    if (pref_i(p, "BYTE", 4))
-        p = skipws(p + 4);
     /* MACRO-10 permits BYTE (9)0,(9)1: the first field starts with
      * a parenthesized bit size immediately followed by its value.
      * The existing DAS form BYTE 9,0 remains supported below.
@@ -4245,25 +4239,16 @@ static int delimited_text_len(char *p, int *len) {
     *len = (int)char_distance(a, b);
     return 0;
 }
-static int ascii_word_count(char *p, int zterm) {
-    char *q = skipws(p);
+/* The parsed operand starts after the directive mnemonic.  Count the
+ * identical delimiter grammar for ASCII, ASCIZ and SIXBIT once, without
+ * repeating the token classifier's keyword recognition.  Division by
+ * each fixed packing width keeps the native KCC implementation small. */
+static int text_word_count(char *p, int sixbit, int zterm) {
     int len;
-    if (*q == '.') q++;
-    if (pref_i(q, "ASCIZ", 5)) q = skipws(q + 5);
-    else if (pref_i(q, "ASCII", 5)) q = skipws(q + 5);
-    if (delimited_text_len(q, &len) != 0) return -1;
+    if (delimited_text_len(p, &len) != 0) return -1;
     if (zterm) len++;
     if (len <= 0) return 1;
-    return (len + 4) / 5;
-}
-static int sixbit_word_count(char *p) {
-    char *q = skipws(p);
-    int len;
-    if (*q == '.') q++;
-    if (pref_i(q, "SIXBIT", 6)) q = skipws(q + 6);
-    if (delimited_text_len(q, &len) != 0) return -1;
-    if (len <= 0) return 1;
-    return (len + 5) / 6;
+    return sixbit ? (len + 5) / 6 : (len + 4) / 5;
 }
 static int eval_abs_u(struct asmctx *c, char *arg, unsigned int dot,
                       das_word_t limit, unsigned int *value)
@@ -4353,15 +4338,15 @@ static int parsed_word_count(struct asmctx *c, struct das_parsed_line *line,
     case DAS_TOK_LCOMM:
         return 0;
     case DAS_TOK_BYTE:
-        return byte_word_count(c, line->stmt, dot);
+        return byte_word_count(c, line->rest, dot);
     case DAS_TOK_ASCII:
-        return ascii_word_count(line->stmt, 0);
+        return text_word_count(line->rest, 0, 0);
     case DAS_TOK_ASCIZ:
-        return ascii_word_count(line->stmt, 1);
+        return text_word_count(line->rest, 0, 1);
     case DAS_TOK_SIXBIT:
-        return sixbit_word_count(line->stmt);
+        return text_word_count(line->rest, 1, 0);
     case DAS_TOK_LONG:
-        return long_word_count(line->stmt);
+        return long_word_count(line->rest);
     case DAS_TOK_WORD:
     case DAS_TOK_EXP:
     case DAS_TOK_POINT:
@@ -4525,19 +4510,33 @@ static int conditional_line(struct asmctx *c, char *line,
                             struct das_cond_state *cond,
                             unsigned int dot, int *handled)
 {
+    enum {
+        COND_IF = 1, COND_IFDEF, COND_IFNDEF, COND_ELSE, COND_ENDIF
+    };
     struct das_parsed_line parsed;
     das_word_t bit;
     das_word_t value;
     char name[DAS_MAX_NAME + 1];
     int parent_active;
     int reloc;
+    int kind;
 
     *handled = 0;
     if (parse_line_head(c, line, &parsed) == 0 || parsed.stmt == 0)
         return 0;
-    if (!streqi(parsed.key, "IF") && !streqi(parsed.key, "IFDEF") &&
-        !streqi(parsed.key, "IFNDEF") && !streqi(parsed.key, "ELSE") &&
-        !streqi(parsed.key, "ENDIF"))
+    /* Decode the pseudo-op once; the remaining conditional state machine
+     * needs only the selected kind, not repeated string comparisons. */
+    if (streqi(parsed.key, "IF"))
+        kind = COND_IF;
+    else if (streqi(parsed.key, "IFDEF"))
+        kind = COND_IFDEF;
+    else if (streqi(parsed.key, "IFNDEF"))
+        kind = COND_IFNDEF;
+    else if (streqi(parsed.key, "ELSE"))
+        kind = COND_ELSE;
+    else if (streqi(parsed.key, "ENDIF"))
+        kind = COND_ENDIF;
+    else
         return 0;
     *handled = 1;
     if (parsed.label != 0) {
@@ -4546,8 +4545,7 @@ static int conditional_line(struct asmctx *c, char *line,
             parsed.stmt);
         goto fail;
     }
-    if (streqi(parsed.key, "IF") || streqi(parsed.key, "IFDEF") ||
-        streqi(parsed.key, "IFNDEF")) {
+    if (kind <= COND_IFNDEF) {
         if (cond->depth >= DAS_MAX_COND_DEPTH || *skipws(parsed.rest) == 0) {
             fprintf(stderr, DAS_DIAG("das: bad if\n",
                 "das: malformed or too-deep .if directive: %s\n"),
@@ -4558,7 +4556,7 @@ static int conditional_line(struct asmctx *c, char *line,
         bit = DAS_W(1) << cond->depth;
         cond->active_bits &= ~bit;
         cond->else_bits &= ~bit;
-        if (streqi(parsed.key, "IF")) {
+        if (kind == COND_IF) {
             if (parent_active) {
                 if (eval_expr(c, parsed.rest, dot, &value, &reloc) != 0 || reloc) {
                     fprintf(stderr, DAS_DIAG("das: bad if expr\n",
@@ -4573,7 +4571,7 @@ static int conditional_line(struct asmctx *c, char *line,
             if (conditional_symbol_arg(parsed.rest, name, sizeof(name)) != 0) {
                 fprintf(stderr, DAS_DIAG("das: bad ifdef\n",
                     "das: malformed .%s directive: %s\n"),
-                    streqi(parsed.key, "IFDEF") ? "ifdef" : "ifndef",
+                    kind == COND_IFDEF ? "ifdef" : "ifndef",
                     parsed.stmt);
                 goto fail;
             }
@@ -4581,7 +4579,7 @@ static int conditional_line(struct asmctx *c, char *line,
                 int visible;
 
                 visible = symbol_visible_here(c, name);
-                if (streqi(parsed.key, "IFNDEF"))
+                if (kind == COND_IFNDEF)
                     visible = !visible;
                 if (visible)
                     cond->active_bits |= bit;
@@ -4596,7 +4594,7 @@ static int conditional_line(struct asmctx *c, char *line,
         goto fail;
     }
     bit = DAS_W(1) << (cond->depth - 1U);
-    if (streqi(parsed.key, "ELSE")) {
+    if (kind == COND_ELSE) {
         if ((cond->else_bits & bit) != 0) {
             fprintf(stderr, DAS_DIAG("das: duplicate else\n",
                 "das: duplicate .else directive\n"));
@@ -7252,16 +7250,8 @@ static int emit_text_directive(char *p, unsigned int dot,
     unsigned int wi;
     int len;
 
+    /* pass2_stmt already parsed and classified the directive. */
     q = skipws(p);
-    if (*q == '.')
-        q++;
-    if (bits == 6U) {
-        if (pref_i(q, "SIXBIT", 6))
-            q = skipws(q + 6);
-    } else if (pref_i(q, "ASCIZ", 5))
-        q = skipws(q + 5);
-    else if (pref_i(q, "ASCII", 5))
-        q = skipws(q + 5);
     if (delimited_text_len(q, &len) != 0)
         return -1;
     text = q + 1;
@@ -7513,15 +7503,15 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
     case DAS_TOK_SPACE:
         return output_emit_zeros(out, dot, nwords);
     case DAS_TOK_BYTE:
-        return emit_byte_directive(c, parsed->stmt, dot, out, nwords);
+        return emit_byte_directive(c, parsed->rest, dot, out, nwords);
     case DAS_TOK_ASCII:
-        return emit_text_directive(parsed->stmt, dot, out, nwords, 7U);
+        return emit_text_directive(parsed->rest, dot, out, nwords, 7U);
     case DAS_TOK_ASCIZ:
-        return emit_text_directive(parsed->stmt, dot, out, nwords, 7U);
+        return emit_text_directive(parsed->rest, dot, out, nwords, 7U);
     case DAS_TOK_SIXBIT:
-        return emit_text_directive(parsed->stmt, dot, out, nwords, 6U);
+        return emit_text_directive(parsed->rest, dot, out, nwords, 6U);
     case DAS_TOK_LONG:
-        return emit_long_directive(c, parsed->stmt, dot, out, nwords);
+        return emit_long_directive(c, parsed->rest, dot, out, nwords);
     case DAS_TOK_WORD:
     case DAS_TOK_EXP:
     case DAS_TOK_POINT:

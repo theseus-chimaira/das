@@ -22,8 +22,9 @@ NATIVE_DAS ?= ./das
 NATIVE_KCCFLAGS ?= -Pgnu99 -O -x=pdp6 -m=gas
 
 # All resident DAS images use KCC.  The native profile omits the host-only
-# peephole optimizer and phase 1 avoids phase-2-only instruction decoding so
-# both large phase images stay below the 034000-word resident budget.
+# peephole optimizer and phase 1 avoids phase-2-only instruction decoding.
+# Both independently enforced resident image ceilings are strict; the
+# current KCC image sizes still exceed them and need further reduction.
 SIXMD_CHECK ?= ${PDP10_PREFIX}/bin/sixmd-check
 MANUAL = DAS.SIXMD
 MANUALDIR ?= ${PDP10_PREFIX}/share/daimos/manual

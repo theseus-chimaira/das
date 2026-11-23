@@ -2,8 +2,13 @@
 
 ## 0. Complete the native DAIMOS guest acceptance
 
-The strict 68-instruction comment scanner, DAS1/DAS2 phase-image limits,
-and native 64-word scratch-backed relocation bitmap contract all pass.
+The 68-instruction comment scanner and native 64-word scratch-backed
+relocation bitmap have prior independent acceptance. The CURRENT
+v1861 KCC-built DAS1/DAS2 phase images are 034173/031344 octal words,
+still above the unchanged 034000/031000 ceilings by 000173/000344.
+Continue shrinking both images without increasing BSS or relaxing the
+limits, then repeat the strict phase-image checker and native guest
+acceptance. Earlier phase-image passes were historical compiler states.
 The full guest currently fails its independent `/TEMP` file-creation
 preflight even though `/TEMP` is mode `01777` and the input exists.
 Investigate the actual boot mount mode and D6FS write-service availability;
