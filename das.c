@@ -7315,7 +7315,7 @@ static int emit_ascii_directive(char *p, unsigned int dot,
         return -1;
     return 0;
 }
-static int parse_instruction_word(struct asmctx *c, char *p, unsigned int dot, das_word_t *w, int *reloc) {
+static int parse_instruction_word(struct asmctx *c, char *p, unsigned int dot, das_word_t *w, int *reloc, int allow_empty) {
     char mnem[32], *q, *rest, *a, *b;
     int i = 0, op, ind, xr, rel;
     unsigned int ac = 0, y;
@@ -7324,7 +7324,7 @@ static int parse_instruction_word(struct asmctx *c, char *p, unsigned int dot, d
     while (*q && !isspace((unsigned char)*q)) { if (i < 31) mnem[i++] = *q; q++; }
     mnem[i] = 0;
     rest = skipws(q);
-    if (!*rest) return 0;
+    if (!*rest && !allow_empty) return 0;
     if (mnem[0] == '.') memmove(mnem, mnem + 1, strlen(mnem));
     op = lookup_op(mnem, 0);
     if (op < 0) {
@@ -7395,7 +7395,7 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
         return parse_owgbp_word(c, skipws(q + 5), dot, w, reloc);
     if (pref_i(q, "%EXIND", 6))
         return parse_exind_word(c, skipws(q + 6), dot, w, reloc);
-    ir = parse_instruction_word(c, q, dot, w, reloc);
+    ir = parse_instruction_word(c, q, dot, w, reloc, 0);
     if (ir)
         return ir < 0 ? -1 : 0;
     if (strstr(q, ",,")) {
@@ -7598,21 +7598,9 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
     if (op < 0) {
         unsigned int alias_op;
         unsigned int alias_ac;
+        int iofn;
 
-        if (lookup_fixed_ac_alias(parsed->key, &alias_op, &alias_ac)) {
-            unsigned int y;
-            int ind;
-            int xr;
-            int rel;
-            das_word_t w;
-
-            if (parse_ea(c, parsed->rest, dot, &y, &ind, &xr, &rel))
-                return -1;
-            w = das_enc_mem(alias_op, alias_ac, ind, xr, y);
-            return output_emit(out, dot, w, rel);
-        } else {
-            int iofn;
-
+        if (!lookup_fixed_ac_alias(parsed->key, &alias_op, &alias_ac)) {
             iofn = lookup_io(parsed->key);
             if (iofn < 0) {
                 if (parsed->was_pseudo)
@@ -7625,45 +7613,17 @@ static int pass2_stmt(struct asmctx *c, int sec, unsigned int off,
                 fprintf(stderr, DAS_DIAG("das: I/O needs kernel mode: %s\n", "das: I/O opcode requires -k in strict DAIMOS V1 mode: %s\n"), parsed->key);
                 return -1;
             }
-            if (!split2(parsed->rest, &a, &b)) {
-                a = (char *)"0";
-                b = parsed->rest;
-            }
-            {
-                unsigned int dev;
-                unsigned int y;
-                int ind;
-                int xr;
-                int rel;
-                das_word_t w;
-
-                dev = parse_octal_u(a);
-                if (parse_ea(c, b, dot, &y, &ind, &xr, &rel))
-                    return -1;
-                w = das_enc_io(dev, (unsigned int)iofn, ind, xr, y);
-                return output_emit(out, dot, w, rel);
-            }
         }
     }
-    if (sixbit_mn(parsed->key) == DAS_OP4('H','A','L','T')) {
-        a = (char *)"4";
-        b = parsed->rest;
-    } else if (!split2(parsed->rest, &a, &b)) {
-        a = (char *)"0";
-        b = parsed->rest;
-    }
     {
-        unsigned int ac;
-        unsigned int y;
-        int ind;
-        int xr;
-        int rel;
         das_word_t w;
+        int rel;
 
-        ac = parse_octal_u(a);
-        if (parse_ea(c, b, dot, &y, &ind, &xr, &rel))
+        /* Reuse exactly the same instruction encoder as .word and literals.
+         * Standalone instructions may omit their final operand; a .word
+         * expression must still distinguish a lone symbol from a mnemonic. */
+        if (parse_instruction_word(c, parsed->stmt, dot, &w, &rel, 1) <= 0)
             return -1;
-        w = das_enc_mem((unsigned int)op, ac, ind, xr, y);
         return output_emit(out, dot, w, rel);
     }
 }
@@ -10480,7 +10440,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
         if (output_replace_word(out, first_off, push_word) != 0)
             return 1;
         if (parse_instruction_word(c, parsed.stmt, second_off,
-                &current_word, &current_reloc) <= 0)
+                &current_word, &current_reloc, 0) <= 0)
             return 1;
         if (output_replace_word_reloc(out, second_off, current_word,
                 current_reloc) != 0)
@@ -10500,7 +10460,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
             if (loc[*sec] == 0U)
                 return 1;
             dot = sec_base(c, *sec) + loc[*sec] - 1U;
-            if (parse_instruction_word(c, parsed.stmt, dot, &word, &reloc) <= 0)
+            if (parse_instruction_word(c, parsed.stmt, dot, &word, &reloc, 0) <= 0)
                 return 1;
             if (output_replace_word_reloc(out, dot, word, reloc) != 0)
                 return 1;
@@ -10553,7 +10513,7 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
         if (loc[*sec] == 0U)
             return 1;
         dot = sec_base(c, *sec) + loc[*sec];
-        if (parse_instruction_word(c, parsed.stmt, dot, &word, &reloc) <= 0)
+        if (parse_instruction_word(c, parsed.stmt, dot, &word, &reloc, 0) <= 0)
             return 1;
         word = (word & DAS_W(0777777777)) | (DAS_W(0403) << 27);
         if (output_replace_word_reloc(out,
