@@ -2775,39 +2775,32 @@ static unsigned int lit_record_words(unsigned int len)
     return 1U + (len + DAS_TARGET_CHARS_PER_WORD - 1U) /
         DAS_TARGET_CHARS_PER_WORD;
 }
+/* Classify the leading literal token without allocating a second parser.
+ * The same classification is needed when freezing SET references and
+ * when computing the number of literal words in the image.
+ */
+static int literal_first_token_is_operator(const char *expr, const char *end,
+                                           int prefix_ok);
+
 static unsigned int literal_image_words(const char *expr, unsigned int len)
 {
     char tmp[DAS_MAX_LINE];
-    char mnem[32];
     char *p;
+    char *q;
     char *comma;
-    unsigned int n;
 
     if (len >= DAS_MAX_LINE)
         len = DAS_MAX_LINE - 1U;
     memcpy(tmp, expr, len);
     tmp[len] = 0;
     p = skipws(tmp);
-    if ((pref_i(p, "POINT", 5) && isspace((unsigned char)p[5])) ||
-        (pref_i(p, "GIW", 3) && isspace((unsigned char)p[3])) ||
-        (pref_i(p, "OWGBP", 5) && isspace((unsigned char)p[5])) ||
-        (pref_i(p, "%EXIND", 6) && p[6] == '('))
+    q = p;
+    while (*q != 0 && !isspace((unsigned char)*q) && *q != ',')
+        q++;
+    if (q != p && literal_first_token_is_operator(p, q, 0))
         return 1U;
     if (strstr(p, ",,") != 0)
         return 1U;
-    n = 0U;
-    while (p[n] != 0 && !isspace((unsigned char)p[n]) &&
-           p[n] != ',' && n + 1U < sizeof(mnem)) {
-        mnem[n] = p[n];
-        n++;
-    }
-    mnem[n] = 0;
-    if (n != 0U) {
-        if (mnem[0] == '.')
-            memmove(mnem, mnem + 1, strlen(mnem));
-        if (opcode_name_known(mnem))
-            return 1U;
-    }
     comma = strchr(p, ',');
     if (comma != 0 && strchr(comma + 1, ',') == 0)
         return 2U;
@@ -2928,7 +2921,8 @@ static int set_reloc_store(struct asmctx *c, unsigned int generation)
 
 #endif
 
-static int literal_first_token_is_operator(const char *expr, const char *end)
+static int literal_first_token_is_operator(const char *expr, const char *end,
+                                           int prefix_ok)
 {
     char name[DAS_MAX_NAME + 1];
     unsigned int n;
@@ -2942,8 +2936,10 @@ static int literal_first_token_is_operator(const char *expr, const char *end)
         memmove(name, name + 1, strlen(name));
     if (opcode_name_known(name))
         return 1;
-    if (pref_i(name, "POINT", 5) || pref_i(name, "GIW", 3) ||
-        pref_i(name, "OWGBP", 5) || pref_i(name, "%EXIND", 6))
+    if ((pref_i(name, "POINT", 5) && (prefix_ok || n == 5U)) ||
+        (pref_i(name, "GIW", 3) && (prefix_ok || n == 3U)) ||
+        (pref_i(name, "OWGBP", 5) && (prefix_ok || n == 5U)) ||
+        (pref_i(name, "%EXIND", 6) && (prefix_ok || n == 6U)))
         return 1;
     return 0;
 }
@@ -3004,7 +3000,7 @@ static int literal_canonicalize(struct asmctx *c, const char *expr,
             if (n <= DAS_MAX_NAME) {
                 memcpy(name, p, n);
                 name[n] = 0;
-                if (!(first_token && literal_first_token_is_operator(p, q)) &&
+                if (!(first_token && literal_first_token_is_operator(p, q, 1)) &&
                     find_sym(c, name, &sym) &&
                     (sym.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_SET)
                     replace = 1;
