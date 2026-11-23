@@ -1077,7 +1077,9 @@ struct das_wordfile {
     FILE *file;
     unsigned int words;
 #ifdef DAS_NATIVE
-    char path[KPATH_MAX_CHARS + 1U];
+    /* Native scratch names share one immutable output-file prefix.
+     * Retain only the suffix, not a full path for every open file. */
+    const char *suffix;
 #endif
 };
 struct das_sym_cache {
@@ -1194,6 +1196,10 @@ struct das_set_reloc {
 };
 #endif
 struct asmctx {
+#ifdef DAS_NATIVE
+    /* Owned by the native main argument frame throughout both passes. */
+    const char *scratch_base;
+#endif
     struct das_sym_store sym_store;
     struct das_lit_store lit_store;
     struct das_wordfile rept_spill;
@@ -1349,7 +1355,6 @@ static int das_object_mode;
 static char das_native_file_paths[DAS_MAX_INCLUDE_DEPTH + 1U]
     [KPATH_MAX_CHARS + 1U];
 static char das_native_inc[DAS_MAX_LINE];
-static char das_native_dir[KPATH_MAX_CHARS + 1U];
 static das_word_t das_native_rept_record[1U + DAS_REPT_PACK_WORDS];
 #endif
 static char das_native_line[DAS_MAX_LINE];
@@ -2150,8 +2155,10 @@ static void sym_record_unpack(
         (record[2] & DAS_HALF_MASK);
 }
 #ifdef DAS_NATIVE
-static int scratch_open(struct das_wordfile *wf, const char *base,
-                        const char *suffix)
+/* All native scratch opens and removals occur outside source-line
+ * processing.  Reuse the existing 256-character temporary buffer: its
+ * contents are dead during store initialization and after source replay. */
+static int scratch_path(const char *base, const char *suffix)
 {
     size_t bn;
     size_t sn;
@@ -2160,11 +2167,27 @@ static int scratch_open(struct das_wordfile *wf, const char *base,
     sn = strlen(suffix);
     if (bn + sn > KPATH_MAX_CHARS)
         return -1;
-    strcopy(wf->path, base, sizeof(wf->path));
-    strcopy(wf->path + bn, suffix, sizeof(wf->path) - bn);
-    (void)remove(wf->path);
-    wf->file = fopen(wf->path, "w+b");
+    memcpy(das_native_tmp, base, bn);
+    memcpy(das_native_tmp + bn, suffix, sn + 1U);
+    return 0;
+}
+
+static int scratch_open(struct das_wordfile *wf, const char *base,
+                        const char *suffix)
+{
+    wf->suffix = suffix;
+    if (scratch_path(base, suffix) != 0)
+        return -1;
+    (void)remove(das_native_tmp);
+    wf->file = fopen(das_native_tmp, "w+b");
     return wf->file == 0 ? -1 : 0;
+}
+
+static void scratch_remove(struct asmctx *c, struct das_wordfile *wf)
+{
+    if (wf->suffix != 0 &&
+        scratch_path(c->scratch_base, wf->suffix) == 0)
+        (void)remove(das_native_tmp);
 }
 #endif
 #if !defined(DAS_PHASE2_PROGRAM) && !defined(DAS_NATIVE_PHASE2_ONLY)
@@ -2175,33 +2198,34 @@ static int store_init(struct asmctx *c, const char *scratch_base)
     memset(&c->rept_spill, 0, sizeof(c->rept_spill));
     memset(&c->ir_spill, 0, sizeof(c->ir_spill));
 #ifdef DAS_NATIVE
+    c->scratch_base = scratch_base;
     if (scratch_open(&c->sym_store.spill, scratch_base, ".DSY") != 0)
         return -1;
     if (scratch_open(&c->lit_store.spill, scratch_base, ".DLT") != 0) {
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
-        (void)remove(c->sym_store.spill.path);
+        scratch_remove(c, &c->sym_store.spill);
         return -1;
     }
     if (scratch_open(&c->rept_spill, scratch_base, ".DRP") != 0) {
         fclose(c->lit_store.spill.file);
         c->lit_store.spill.file = 0;
-        (void)remove(c->lit_store.spill.path);
+        scratch_remove(c, &c->lit_store.spill);
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
-        (void)remove(c->sym_store.spill.path);
+        scratch_remove(c, &c->sym_store.spill);
         return -1;
     }
     if (scratch_open(&c->ir_spill, scratch_base, ".D1R") != 0) {
         fclose(c->rept_spill.file);
         c->rept_spill.file = 0;
-        (void)remove(c->rept_spill.path);
+        scratch_remove(c, &c->rept_spill);
         fclose(c->lit_store.spill.file);
         c->lit_store.spill.file = 0;
-        (void)remove(c->lit_store.spill.path);
+        scratch_remove(c, &c->lit_store.spill);
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
-        (void)remove(c->sym_store.spill.path);
+        scratch_remove(c, &c->sym_store.spill);
         return -1;
     }
 #else
@@ -2251,12 +2275,13 @@ static int store_init_phase2(struct asmctx *c, const char *scratch_base)
     memset(&c->obj_reloc_spill, 0, sizeof(c->obj_reloc_spill));
 #endif
 #ifdef DAS_NATIVE
+    c->scratch_base = scratch_base;
     if (scratch_open(&c->sym_store.spill, scratch_base, ".DSY") != 0)
         return -1;
     if (scratch_open(&c->lit_store.spill, scratch_base, ".DLT") != 0) {
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
-        (void)remove(c->sym_store.spill.path);
+        scratch_remove(c, &c->sym_store.spill);
         return -1;
     }
 #else
@@ -2281,42 +2306,42 @@ static void store_close(struct asmctx *c)
     if (c->relmap_spill.file != 0) {
         fclose(c->relmap_spill.file);
         c->relmap_spill.file = 0;
-        (void)remove(c->relmap_spill.path);
+        scratch_remove(c, &c->relmap_spill);
     }
 #endif
 #ifdef DAS_NATIVE
     if (c->obj_reloc_spill.file != 0) {
         fclose(c->obj_reloc_spill.file);
         c->obj_reloc_spill.file = 0;
-        (void)remove(c->obj_reloc_spill.path);
+        scratch_remove(c, &c->obj_reloc_spill);
     }
 #endif
     if (c->sym_store.spill.file != 0) {
         fclose(c->sym_store.spill.file);
         c->sym_store.spill.file = 0;
 #ifdef DAS_NATIVE
-        (void)remove(c->sym_store.spill.path);
+        scratch_remove(c, &c->sym_store.spill);
 #endif
     }
     if (c->lit_store.spill.file != 0) {
         fclose(c->lit_store.spill.file);
         c->lit_store.spill.file = 0;
 #ifdef DAS_NATIVE
-        (void)remove(c->lit_store.spill.path);
+        scratch_remove(c, &c->lit_store.spill);
 #endif
     }
     if (c->rept_spill.file != 0) {
         fclose(c->rept_spill.file);
         c->rept_spill.file = 0;
 #ifdef DAS_NATIVE
-        (void)remove(c->rept_spill.path);
+        scratch_remove(c, &c->rept_spill);
 #endif
     }
     if (c->ir_spill.file != 0) {
         fclose(c->ir_spill.file);
         c->ir_spill.file = 0;
 #ifdef DAS_NATIVE
-        (void)remove(c->ir_spill.path);
+        scratch_remove(c, &c->ir_spill);
 #endif
     }
 }
@@ -6084,7 +6109,8 @@ static int pass1_line(struct asmctx *c, char *line, int *sec)
          */
         if (!streqi(parsed.key, "DIRECTIVE") ||
             !streqi(parsed.rest, "KL10") || das_strict_base) {
-            fprintf(stderr, "das: unsupported or conflicting .DIRECTIVE: %s\n",
+            fprintf(stderr, DAS_DIAG("das: bad directive\n",
+                    "das: unsupported or conflicting .DIRECTIVE: %s\n"),
                     parsed.stmt);
             return 1;
         }
@@ -9744,9 +9770,12 @@ static int pass1_rept_body(struct asmctx *c, const char *source_path,
     line = das_native_line;
     tmp = das_native_tmp;
     inc = das_native_inc;
-    dir = das_native_dir;
+    /* After parse_include_line(), tmp is dead until the next source
+     * line.  Use that storage for the include directory rather than
+     * retaining an additional resident path buffer. */
+    dir = das_native_tmp;
     path = das_native_file_paths[(unsigned int)include_depth];
-    dir_cap = sizeof(das_native_dir);
+    dir_cap = KPATH_MAX_CHARS + 1U;
     path_cap = sizeof(das_native_file_paths[0]);
 #endif
     pos = first;
@@ -9962,11 +9991,13 @@ static int pass1_file(struct asmctx *c, const char *infile, int *sec,
 #ifdef DAS_NATIVE
     line = das_native_line;
     inc = das_native_inc;
-    dir = das_native_dir;
+    /* Include lookup consumes the parsed line before building the path.
+     * The same transient buffer serves as dirname storage. */
+    dir = das_native_tmp;
     path = das_native_file_paths[(unsigned int)depth];
     tmp = das_native_tmp;
     words.buffer = word_store;
-    dir_cap = sizeof(das_native_dir);
+    dir_cap = KPATH_MAX_CHARS + 1U;
     path_cap = sizeof(das_native_file_paths[0]);
 #else
     line = line_store;
@@ -10670,7 +10701,8 @@ static int pass2_line(struct asmctx *c, char *line, int *sec,
     case DAS_TOK_DIRECTIVE:
         if (!streqi(parsed.key, "DIRECTIVE") ||
             !streqi(parsed.rest, "KL10") || das_strict_base) {
-            fprintf(stderr, "das: unsupported or conflicting .DIRECTIVE: %s\n",
+            fprintf(stderr, DAS_DIAG("das: bad directive\n",
+                    "das: unsupported or conflicting .DIRECTIVE: %s\n"),
                     parsed.stmt);
             return 1;
         }

@@ -4,11 +4,10 @@
 
 The 68-instruction comment scanner and native 64-word scratch-backed
 relocation bitmap have prior independent acceptance. The CURRENT
-v1871 KCC-built DAS1/DAS2 phase images are 034054/031076 octal words,
-still above the unchanged 034000/031000 ceilings by 000054/000076.
-Including 02000 words of reserved stack, DAS1 process usage is 040157,
-so the additional full-process deficit is 000157 words against 040000.
-Without a corresponding BSS reduction, DAS1 image must reach 033675.
+v1876 KCC-built DAS1/DAS2 phase images are 034101/031117 octal words,
+still above the unchanged 034000/031000 ceilings by 000101/000117.
+The reserved 02000-word stacks now fit inside the 040000-word full
+process limit: 037756 for DAS1 and 034465 for DAS2, both octal.
 Continue shrinking both images without increasing BSS or relaxing the
 limits, then repeat the strict phase-image checker and native guest
 acceptance. Earlier phase-image passes were historical compiler states.

@@ -1,5 +1,18 @@
 # DAS current status
 
+## 2026-11-23 v1876: scratch path BSS and diagnostic fix; image gate OPEN
+
+Native DAS1/DAS2 images are **034101/031117** octal words. BSS is now
+**001655/001346** after replacing per-wordfile path buffers with a
+shared output basename and immutable suffixes, and reusing the parser
+temporary for include-directory lookup. Both full-process budgets pass:
+DAS1 is 037756 and DAS2 is 034465 against 040000 with stack included.
+Both strict image ceilings **034000/031000** still fail, by
+**000101/000117** respectively. Invalid `.DIRECTIVE` handling now uses
+a numeric native diagnostic in both phases instead of passing a string
+pointer. Native mock tests cover path creation, cleanup, and boundary
+conditions; physical guest acceptance remains OPEN.
+
 ## 2026-11-23 v1871: packed directive index; image/process gates OPEN
 
 The current KCC/PDP-6 native DAS1/DAS2 phase images are
