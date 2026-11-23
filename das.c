@@ -3519,14 +3519,65 @@ static int resolve_set_symbol(struct asmctx *c, struct sym *sym)
     return 1;
 }
 
-static struct expr_value parse_expr_primary(struct expr_state *st)
+/* Share symbol resolution between numeric local labels and ordinary names.
+ * A missing numeric local label may only reference an existing object
+ * symbol; an ordinary external name may create a new object symbol.
+ * Keeping one resolver reduces both native phase images.
+ */
+static struct expr_value expr_resolve_name(struct expr_state *st,
+                                           const char *tok, int local_label)
 {
     struct expr_value out;
     struct sym sym;
+    unsigned int set_generation;
+    unsigned int gi;
+
+    out = expr_abs(DAS_W(0));
+    if (!find_sym(st->c, tok, &sym)) {
+        gi = 0U;
+        if (st->c->object_mode)
+            gi = local_label ? obj_global_find(st->c, tok) :
+                               obj_global_add(st->c, tok);
+        if (gi != 0U) {
+            out.rel = 1;
+            expr_set_symbol(&out, gi);
+            return out;
+        }
+        goto undefined;
+    }
+    set_generation = (sym.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_SET ?
+        (unsigned int)(sym.off & DAS_HALF_MASK) :
+        set_snapshot_generation(tok);
+    if (!resolve_set_symbol(st->c, &sym))
+        goto undefined;
+    if ((sym.sec & DAS_SYM_SEC_MASK) == DAS_SEC_REL)
+        out.value = sym.off;
+    else
+        out.value = sec_base(st->c, sym.sec & DAS_SYM_SEC_MASK) + sym.off;
+    out.value = das_mask36(out.value);
+    out.rel = (sym.sec & DAS_SYM_SEC_MASK) != DAS_SEC_ABS;
+    if (out.rel) {
+        expr_set_local(&out, sym.sec & DAS_SYM_SEC_MASK);
+#ifndef DAS_NATIVE
+        if (set_generation != 0U)
+            (void)set_reloc_apply(st->c, set_generation, &out);
+#endif
+    }
+    return out;
+
+undefined:
+    if (!st->c->eval_silent)
+        fprintf(stderr, DAS_DIAG("das: undef\n", "das: undefined symbol %s\n"), tok);
+    st->failed = 1;
+    return out;
+}
+
+static struct expr_value parse_expr_primary(struct expr_state *st)
+{
+    struct expr_value out;
     char tok[DAS_MAX_NAME + 1];
     char *q;
     das_word_t v;
-    unsigned int set_generation;
     int n;
 
     out = expr_abs(DAS_W(0));
@@ -3550,44 +3601,7 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
         while (isdigit((unsigned char)*q) && n < DAS_MAX_NAME)
             tok[n++] = *q++;
         tok[n] = 0;
-        if (!find_sym(st->c, tok, &sym)) {
-            unsigned int gi;
-            gi = st->c->object_mode ? obj_global_find(st->c, tok) : 0U;
-            if (gi != 0U) {
-                out.value = DAS_W(0);
-                out.rel = 1;
-                expr_set_symbol(&out, gi);
-                st->p = q;
-                return out;
-            }
-            if (!st->c->eval_silent)
-                fprintf(stderr, DAS_DIAG("das: undef\n", "das: undefined symbol %s\n"), tok);
-            st->failed = 1;
-            return out;
-        }
-        set_generation = (sym.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_SET ?
-            (unsigned int)(sym.off & DAS_HALF_MASK) :
-            set_snapshot_generation(tok);
-        if (!resolve_set_symbol(st->c, &sym)) {
-            if (!st->c->eval_silent)
-                fprintf(stderr, DAS_DIAG("das: undef\n",
-                    "das: undefined symbol %s\n"), tok);
-            st->failed = 1;
-            return out;
-        }
-        if ((sym.sec & DAS_SYM_SEC_MASK) == DAS_SEC_REL)
-            out.value = sym.off;
-        else
-            out.value = sec_base(st->c, sym.sec & DAS_SYM_SEC_MASK) + sym.off;
-        out.value = das_mask36(out.value);
-        out.rel = (sym.sec & DAS_SYM_SEC_MASK) != DAS_SEC_ABS;
-        if (out.rel) {
-            expr_set_local(&out, sym.sec & DAS_SYM_SEC_MASK);
-#ifndef DAS_NATIVE
-            if (set_generation != 0U)
-                (void)set_reloc_apply(st->c, set_generation, &out);
-#endif
-        }
+        out = expr_resolve_name(st, tok, 1);
         st->p = q;
         return out;
     }
@@ -3613,43 +3627,7 @@ static struct expr_value parse_expr_primary(struct expr_state *st)
         while (isname((unsigned char)*st->p) && n < DAS_MAX_NAME)
             tok[n++] = *st->p++;
         tok[n] = 0;
-        if (!find_sym(st->c, tok, &sym)) {
-            unsigned int gi;
-            gi = st->c->object_mode ? obj_global_add(st->c, tok) : 0U;
-            if (gi != 0U) {
-                out.value = DAS_W(0);
-                out.rel = 1;
-                expr_set_symbol(&out, gi);
-                return out;
-            }
-            if (!st->c->eval_silent)
-                fprintf(stderr, DAS_DIAG("das: undef\n", "das: undefined symbol %s\n"), tok);
-            st->failed = 1;
-            return out;
-        }
-        set_generation = (sym.sec & DAS_SYM_KIND_MASK) == DAS_SYM_KIND_SET ?
-            (unsigned int)(sym.off & DAS_HALF_MASK) :
-            set_snapshot_generation(tok);
-        if (!resolve_set_symbol(st->c, &sym)) {
-            if (!st->c->eval_silent)
-                fprintf(stderr, DAS_DIAG("das: undef\n",
-                    "das: undefined symbol %s\n"), tok);
-            st->failed = 1;
-            return out;
-        }
-        if ((sym.sec & DAS_SYM_SEC_MASK) == DAS_SEC_REL)
-            out.value = sym.off;
-        else
-            out.value = sec_base(st->c, sym.sec & DAS_SYM_SEC_MASK) + sym.off;
-        out.value = das_mask36(out.value);
-        out.rel = (sym.sec & DAS_SYM_SEC_MASK) != DAS_SEC_ABS;
-        if (out.rel) {
-            expr_set_local(&out, sym.sec & DAS_SYM_SEC_MASK);
-#ifndef DAS_NATIVE
-            if (set_generation != 0U)
-                (void)set_reloc_apply(st->c, set_generation, &out);
-#endif
-        }
+        out = expr_resolve_name(st, tok, 0);
         return out;
     }
     expr_error(st, "malformed expression");
