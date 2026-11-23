@@ -1,5 +1,22 @@
 # DAS current status
 
+## 2026-11-23 v1871: packed directive index; image/process gates OPEN
+
+The current KCC/PDP-6 native DAS1/DAS2 phase images are
+**034054/031076 octal words** with unchanged BSS **002103/001573**.
+The unchanged 034000/031000 image limits still fail by 000054/000076.
+Including the mandatory 02000-word reserved stack, DAS1's total
+process size is **040157** (000157 over the 040000 ceiling), while
+DAS2's process size is **034671** (within the process ceiling).
+
+V1870 uses sequential character consumption for packed ASCII/SIXBIT
+output. V1871 combines six five-bit directive letters and the six-bit
+token tag in one 36-bit entry for each of 43 classified keywords.
+The independent keyword/alias C89 oracle passes; existing host fast/full,
+KCC, directive word/transport and OWGBP checks also pass. All native
+guest acceptance remains open. The size profiler now reports total
+process usage, not just image excess.
+
 ## 2026-11-23 v1868: native I/O and operand savings, size gate OPEN
 
 Native DAS1/DAS2 images now measure **034114/031161** octal words,

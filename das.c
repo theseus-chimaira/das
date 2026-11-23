@@ -1590,15 +1590,15 @@ static int pref_i(const char *a, const char *b, size_t n)
 static int streqi(const char *a, const char *b) { while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return 0; a++; b++; } return *a == 0 && *b == 0; }
 static int pref_i(const char *a, const char *b, size_t n) { size_t i; for (i = 0; i < n; i++) if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return 0; return 1; }
 #endif
-#define DAS_KEY3(a,b,c) (DAS_OP3((a),(b),(c)) << 18)
-#define DAS_KEY4(a,b,c,d) (DAS_OP4((a),(b),(c),(d)) << 12)
-#define DAS_KEY5(a,b,c,d,e) (DAS_OP5((a),(b),(c),(d),(e)) << 6)
-#define DAS_KEY6(a,b,c,d,e,f) DAS_OP6((a),(b),(c),(d),(e),(f))
-
-struct das_token_entry {
-    das_word_t key;
-    enum das_token token;
-};
+/* Directive keywords contain only A-Z, so six five-bit letters occupy
+ * 30 bits.  One 36-bit table word then holds the key and the six-bit
+ * token number instead of two complete 36-bit words per keyword. */
+#define DAS_TCH(c) ((das_word_t)((c) - 'A' + 1))
+#define DAS_KEY3(a,b,c) ((DAS_TCH(a) << 25) | (DAS_TCH(b) << 20) | (DAS_TCH(c) << 15))
+#define DAS_KEY4(a,b,c,d) (DAS_KEY3(a,b,c) | (DAS_TCH(d) << 10))
+#define DAS_KEY5(a,b,c,d,e) (DAS_KEY4(a,b,c,d) | (DAS_TCH(e) << 5))
+#define DAS_KEY6(a,b,c,d,e,f) (DAS_KEY5(a,b,c,d,e) | DAS_TCH(f))
+#define DAS_TOKEN_ENTRY(key,token) (((key) << 6) | (das_word_t)(token))
 
 static das_word_t token_key(const char *s)
 {
@@ -1613,66 +1613,69 @@ static das_word_t token_key(const char *s)
         ch = (unsigned int)(unsigned char)*s++;
         if (ch >= 'a' && ch <= 'z')
             ch = ch - 'a' + 'A';
-        w = (w << 6) | (das_word_t)(ch - 'A' + 1U);
+        if (ch < 'A' || ch > 'Z')
+            return DAS_W(0);
+        w = (w << 5) | (das_word_t)(ch - 'A' + 1U);
         n++;
     }
     while (n++ < 6U)
-        w <<= 6;
+        w <<= 5;
     return w;
 }
 
 static enum das_token classify_token(struct asmctx *c, const char *key)
 {
-    static const struct das_token_entry table[] = {
-        {DAS_KEY5('A','L','I','G','N'), DAS_TOK_ALIGN},
-        {DAS_KEY5('A','S','C','I','I'), DAS_TOK_ASCII},
-        {DAS_KEY5('A','S','C','I','Z'), DAS_TOK_ASCIZ},
-        {DAS_KEY5('B','L','O','C','K'), DAS_TOK_BLOCK},
-        {DAS_KEY3('B','S','S'), DAS_TOK_BSS},
-        {DAS_KEY4('B','Y','T','E'), DAS_TOK_BYTE},
-        {DAS_KEY4('C','O','D','E'), DAS_TOK_TEXT},
-        {DAS_KEY4('C','O','M','M'), DAS_TOK_COMM},
-        {DAS_KEY6('C','O','M','M','O','N'), DAS_TOK_COMM},
-        {DAS_KEY5('C','O','N','S','T'), DAS_TOK_DATA},
-        {DAS_KEY4('D','A','T','A'), DAS_TOK_DATA},
-        {DAS_KEY6('D','I','R','E','C','T'), DAS_TOK_DIRECTIVE},
-        {DAS_KEY3('E','N','D'), DAS_TOK_NO_WORDS},
-        {DAS_KEY5('E','N','D','P','S'), DAS_TOK_NO_WORDS},
-        {DAS_KEY5('E','N','T','R','Y'), DAS_TOK_ENTRY},
-        {DAS_KEY3('E','Q','U'), DAS_TOK_EQU},
-        {DAS_KEY5('E','R','R','O','R'), DAS_TOK_ERROR},
-        {DAS_KEY3('E','X','P'), DAS_TOK_EXP},
-        {DAS_KEY6('E','X','T','E','R','N'), DAS_TOK_EXTERN},
-        {DAS_KEY4('F','I','L','E'), DAS_TOK_NO_WORDS},
-        {DAS_KEY3('G','I','W'), DAS_TOK_GIW},
-        {DAS_KEY6('G','L','O','B','A','L'), DAS_TOK_GLOBAL},
-        {DAS_KEY5('G','L','O','B','L'), DAS_TOK_GLOBAL},
-        {DAS_KEY5('I','D','E','N','T'), DAS_TOK_NO_WORDS},
-        {DAS_KEY5('L','C','O','M','M'), DAS_TOK_LCOMM},
-        {DAS_KEY3('L','O','C'), DAS_TOK_NO_WORDS},
-        {DAS_KEY4('L','O','N','G'), DAS_TOK_LONG},
-        {DAS_KEY3('O','R','G'), DAS_TOK_ORG},
-        {DAS_KEY5('O','W','G','B','P'), DAS_TOK_OWGBP},
-        {DAS_KEY5('P','O','I','N','T'), DAS_TOK_POINT},
-        {DAS_KEY5('P','S','E','C','T'), DAS_TOK_PSECT},
-        {DAS_KEY5('R','A','D','I','X'), DAS_TOK_RADIX},
-        {DAS_KEY6('R','O','D','A','T','A'), DAS_TOK_DATA},
-        {DAS_KEY4('S','E','C','T'), DAS_TOK_PSECT},
-        {DAS_KEY6('S','E','C','T','I','O'), DAS_TOK_PSECT},
-        {DAS_KEY3('S','E','T'), DAS_TOK_SET},
-        {DAS_KEY6('S','I','X','B','I','T'), DAS_TOK_SIXBIT},
-        {DAS_KEY5('S','P','A','C','E'), DAS_TOK_SPACE},
-        {DAS_KEY4('T','E','X','T'), DAS_TOK_TEXT},
-        {DAS_KEY5('T','I','T','L','E'), DAS_TOK_NO_WORDS},
-        {DAS_KEY6('W','A','R','N','I','N'), DAS_TOK_WARNING},
-        {DAS_KEY4('W','O','R','D'), DAS_TOK_WORD},
-        {DAS_KEY4('Z','E','R','O'), DAS_TOK_SPACE}
+    static const das_word_t table[] = {
+        DAS_TOKEN_ENTRY(DAS_KEY5('A','L','I','G','N'), DAS_TOK_ALIGN),
+        DAS_TOKEN_ENTRY(DAS_KEY5('A','S','C','I','I'), DAS_TOK_ASCII),
+        DAS_TOKEN_ENTRY(DAS_KEY5('A','S','C','I','Z'), DAS_TOK_ASCIZ),
+        DAS_TOKEN_ENTRY(DAS_KEY5('B','L','O','C','K'), DAS_TOK_BLOCK),
+        DAS_TOKEN_ENTRY(DAS_KEY3('B','S','S'), DAS_TOK_BSS),
+        DAS_TOKEN_ENTRY(DAS_KEY4('B','Y','T','E'), DAS_TOK_BYTE),
+        DAS_TOKEN_ENTRY(DAS_KEY4('C','O','D','E'), DAS_TOK_TEXT),
+        DAS_TOKEN_ENTRY(DAS_KEY4('C','O','M','M'), DAS_TOK_COMM),
+        DAS_TOKEN_ENTRY(DAS_KEY6('C','O','M','M','O','N'), DAS_TOK_COMM),
+        DAS_TOKEN_ENTRY(DAS_KEY5('C','O','N','S','T'), DAS_TOK_DATA),
+        DAS_TOKEN_ENTRY(DAS_KEY4('D','A','T','A'), DAS_TOK_DATA),
+        DAS_TOKEN_ENTRY(DAS_KEY6('D','I','R','E','C','T'), DAS_TOK_DIRECTIVE),
+        DAS_TOKEN_ENTRY(DAS_KEY3('E','N','D'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY5('E','N','D','P','S'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY5('E','N','T','R','Y'), DAS_TOK_ENTRY),
+        DAS_TOKEN_ENTRY(DAS_KEY3('E','Q','U'), DAS_TOK_EQU),
+        DAS_TOKEN_ENTRY(DAS_KEY5('E','R','R','O','R'), DAS_TOK_ERROR),
+        DAS_TOKEN_ENTRY(DAS_KEY3('E','X','P'), DAS_TOK_EXP),
+        DAS_TOKEN_ENTRY(DAS_KEY6('E','X','T','E','R','N'), DAS_TOK_EXTERN),
+        DAS_TOKEN_ENTRY(DAS_KEY4('F','I','L','E'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY3('G','I','W'), DAS_TOK_GIW),
+        DAS_TOKEN_ENTRY(DAS_KEY6('G','L','O','B','A','L'), DAS_TOK_GLOBAL),
+        DAS_TOKEN_ENTRY(DAS_KEY5('G','L','O','B','L'), DAS_TOK_GLOBAL),
+        DAS_TOKEN_ENTRY(DAS_KEY5('I','D','E','N','T'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY5('L','C','O','M','M'), DAS_TOK_LCOMM),
+        DAS_TOKEN_ENTRY(DAS_KEY3('L','O','C'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY4('L','O','N','G'), DAS_TOK_LONG),
+        DAS_TOKEN_ENTRY(DAS_KEY3('O','R','G'), DAS_TOK_ORG),
+        DAS_TOKEN_ENTRY(DAS_KEY5('O','W','G','B','P'), DAS_TOK_OWGBP),
+        DAS_TOKEN_ENTRY(DAS_KEY5('P','O','I','N','T'), DAS_TOK_POINT),
+        DAS_TOKEN_ENTRY(DAS_KEY5('P','S','E','C','T'), DAS_TOK_PSECT),
+        DAS_TOKEN_ENTRY(DAS_KEY5('R','A','D','I','X'), DAS_TOK_RADIX),
+        DAS_TOKEN_ENTRY(DAS_KEY6('R','O','D','A','T','A'), DAS_TOK_DATA),
+        DAS_TOKEN_ENTRY(DAS_KEY4('S','E','C','T'), DAS_TOK_PSECT),
+        DAS_TOKEN_ENTRY(DAS_KEY6('S','E','C','T','I','O'), DAS_TOK_PSECT),
+        DAS_TOKEN_ENTRY(DAS_KEY3('S','E','T'), DAS_TOK_SET),
+        DAS_TOKEN_ENTRY(DAS_KEY6('S','I','X','B','I','T'), DAS_TOK_SIXBIT),
+        DAS_TOKEN_ENTRY(DAS_KEY5('S','P','A','C','E'), DAS_TOK_SPACE),
+        DAS_TOKEN_ENTRY(DAS_KEY4('T','E','X','T'), DAS_TOK_TEXT),
+        DAS_TOKEN_ENTRY(DAS_KEY5('T','I','T','L','E'), DAS_TOK_NO_WORDS),
+        DAS_TOKEN_ENTRY(DAS_KEY6('W','A','R','N','I','N'), DAS_TOK_WARNING),
+        DAS_TOKEN_ENTRY(DAS_KEY4('W','O','R','D'), DAS_TOK_WORD),
+        DAS_TOKEN_ENTRY(DAS_KEY4('Z','E','R','O'), DAS_TOK_SPACE)
     };
     das_word_t k;
     unsigned int lo;
     unsigned int hi;
     unsigned int mid;
     unsigned int first;
+    das_word_t entry;
 
     if (pref_i(key, "P2ALIGN", 7) && key[7] == 0)
         return DAS_TOK_ALIGN;
@@ -1688,13 +1691,14 @@ static enum das_token classify_token(struct asmctx *c, const char *key)
     hi = (unsigned int)(sizeof(table) / sizeof(table[0]));
     while (lo < hi) {
         mid = lo + (hi - lo) / 2U;
+        entry = table[mid];
         c->parser_token_probes++;
-        if (k < table[mid].key)
+        if (k < (entry >> 6))
             hi = mid;
-        else if (k > table[mid].key)
+        else if (k > (entry >> 6))
             lo = mid + 1U;
         else
-            return table[mid].token;
+            return (enum das_token)(entry & 077U);
     }
     return DAS_TOK_OTHER;
 }
@@ -7265,6 +7269,7 @@ static int emit_text_directive(char *p, unsigned int dot,
     char *q;
     char *text;
     unsigned int perword;
+    unsigned int remaining;
     unsigned int wi;
     int len;
 
@@ -7273,6 +7278,7 @@ static int emit_text_directive(char *p, unsigned int dot,
     if (delimited_text_len(q, &len) != 0)
         return -1;
     text = q + 1;
+    remaining = (unsigned int)len;
     /* Only 6-bit and 7-bit text reaches this writer.  Avoid a dynamic
      * division in the native phase-2 image for these fixed widths. */
     perword = bits == 6U ? 6U : 5U;
@@ -7282,13 +7288,12 @@ static int emit_text_directive(char *p, unsigned int dot,
 
         word = DAS_W(0);
         for (slot = 0U; slot < perword; slot++) {
-            unsigned int pos;
             unsigned int ch;
 
-            pos = wi * perword + slot;
             ch = 0U;
-            if (pos < (unsigned int)len) {
-                ch = (unsigned int)(unsigned char)text[pos];
+            if (remaining != 0U) {
+                ch = (unsigned int)(unsigned char)*text++;
+                remaining--;
                 if (bits == 6U) {
                     if (ch >= 'a' && ch <= 'z')
                         ch -= 'a' - 'A';
