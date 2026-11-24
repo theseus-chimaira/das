@@ -6479,6 +6479,27 @@ static int assignment_args(char *rest, char *name, size_t namesz,
     return 0;
 }
 
+/* In an object, retain a local assignment's actual section and its
+ * section-relative value. A flattened image address (DAS_SEC_REL) is
+ * not a valid exported DOBJ definition, and a .set symbol itself holds
+ * a snapshot serial, not the assigned value.
+ */
+static int assignment_section(struct asmctx *c, int reloc,
+                              das_word_t *value)
+{
+    int sec;
+
+    if (!reloc)
+        return DAS_SEC_ABS;
+    sec = c->eval_target_sec;
+    if (c->object_mode && c->eval_reloc_kind == DAS_OBJ_RELOC_LOCAL_RH18 &&
+        sec >= DAS_SEC_TEXT && sec <= DAS_SEC_BSS) {
+        *value = das_mask36(*value - (das_word_t)sec_base(c, sec));
+        return sec;
+    }
+    return DAS_SEC_REL;
+}
+
 #if !defined(DAS_NATIVE_PHASE1_ONLY)
 static int define_assignment(struct asmctx *c,
                              struct das_parsed_line *parsed,
@@ -6506,7 +6527,7 @@ static int define_assignment(struct asmctx *c,
         generation = ++c->set_serial;
     if (eval_expr(c, expr, dot, &value, &reloc) != 0)
         return 1;
-    sec = reloc ? DAS_SEC_REL : DAS_SEC_ABS;
+    sec = assignment_section(c, reloc, &value);
     if (find_sym(c, name, &oldsym)) {
         int oldkind;
 
@@ -6625,7 +6646,7 @@ static int pass1_assignment(struct asmctx *c,
         return 0;
     }
     c->eval_silent = 0;
-    sec = reloc ? DAS_SEC_REL : DAS_SEC_ABS;
+    sec = assignment_section(c, reloc, &value);
     if (kind == DAS_SYM_KIND_SET) {
         set_snapshot_define(c, generation, sec, value);
 #ifndef DAS_NATIVE
@@ -7681,10 +7702,14 @@ static int output_finish_object(struct das_output *out)
             count > c->obj_global_count)
             return -1;
         if (find_sym(c, marker.name, &definition)) {
+            if (!resolve_set_symbol(c, &definition) ||
+                (definition.sec & DAS_SYM_SEC_MASK) == DAS_SEC_REL) {
+                fprintf(stderr, DAS_DIAG("das: bad export\n",
+                    "das: cannot export unresolved assignment %s\n"), marker.name);
+                return -1;
+            }
             kind = 1;
             sec = definition.sec & DAS_SYM_SEC_MASK;
-            if (sec == DAS_SEC_REL)
-                sec = DAS_SEC_ABS;
             value = definition.off;
         } else {
             kind = 2;
@@ -7816,14 +7841,16 @@ static int output_finish_object(struct das_output *out)
         unsigned int len;
 
         if (find_sym(c, c->obj_globals[i].name, &sym)) {
+            if (!resolve_set_symbol(c, &sym) ||
+                (sym.sec & DAS_SYM_SEC_MASK) == DAS_SEC_REL) {
+                fprintf(stderr, DAS_DIAG("das: bad export\n",
+                    "das: cannot export unresolved assignment %s\n"),
+                    c->obj_globals[i].name);
+                return -1;
+            }
             kind = 1;
             sec = sym.sec & DAS_SYM_SEC_MASK;
-            if (sec == DAS_SEC_REL)
-                sec = DAS_SEC_ABS;
-            if (sec == DAS_SEC_ABS)
-                value = sym.off;
-            else
-                value = sym.off;
+            value = sym.off;
         } else {
             kind = 2;
             sec = DAS_SEC_ABS;
