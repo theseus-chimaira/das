@@ -1500,7 +1500,7 @@ static const das_word_t das_op_info_six[] = {
     DAS_W(0001524646453),
     DAS_W(0002245124463),
     DAS_W(0002305144335),
-    DAS_W(0001556402000)
+    DAS_W(0001557032000) /* SKIPLE, XMOVEI (0415, nonbase), unused */
 };
 #elif DAS_ENABLE_OPTIMIZER
 /* Pass 1 needs exact skip classification, but not the complete opcode
