@@ -63,6 +63,9 @@ typedef unsigned long long das_word_t;
 #define DAS_OBJ_RELOC_SYMBOL_RH18 2
 #define DAS_OBJ_RELOC_LOCAL_LH18  3
 #define DAS_OBJ_RELOC_SYMBOL_LH18 4
+#define DAS_OBJ_RELOC_LOCAL_ADDR30 5
+#define DAS_OBJ_RELOC_SYMBOL_ADDR30 6
+#define DAS_ADDR30_MASK DAS_W(07777777777)
 #define DAS_MAGIC_DXR ((((das_word_t)044) << 12) | (((das_word_t)070) << 6) | DAS_W(062))
 #define DAS_WORD(lh,rh) ((((das_word_t)((lh) & DAS_HALF_MASK)) << 18) | ((das_word_t)((rh) & DAS_HALF_MASK)))
 #define DAS_MASK18(x) ((unsigned int)(x) & DAS_HALF_MASK)
@@ -1990,6 +1993,7 @@ struct asmctx {
     struct das_obj_reloc *obj_relocs;
     unsigned int obj_reloc_count;
     unsigned int obj_reloc_cap;
+    int obj_extended;
     struct das_set_reloc *set_relocs;
     unsigned int set_reloc_cap;
 #endif
@@ -3480,7 +3484,8 @@ static int obj_reloc_add(struct asmctx *c, int loc_sec, unsigned int offset,
     r->type = type;
     r->target_sec = target_sec;
     r->symbol = symbol;
-    r->addend = obj_18_addend(addend);
+    r->addend = type == DAS_OBJ_RELOC_LOCAL_ADDR30 ||
+        type == DAS_OBJ_RELOC_SYMBOL_ADDR30 ? addend : obj_18_addend(addend);
     return 0;
 }
 #endif
@@ -7032,7 +7037,50 @@ static int parse_point_word(struct asmctx *c, char *q, unsigned int dot,
     *reloc = r;
     return 0;
 }
-static int parse_giw_word(struct asmctx *c, char *q, unsigned int dot, das_word_t *w, int *reloc) { if (eval_expr_octal(c, q, dot, w, reloc)) return -1; return 0; }
+/* Global addresses occupy the low 30 bits of a word, not an RH18.
+ * DXR and the resident assembler have no global relocation format.
+ * Absolute global words need no relocation; symbolic ones require DOBJ2.
+ */
+static int global_address(struct asmctx *c, das_word_t y, int reloc)
+{
+    if (das_strict_base || (!reloc && y > DAS_ADDR30_MASK)) {
+        fprintf(stderr, DAS_DIAG("das: global address\n",
+            "das: global address out of range or unavailable in base mode\n"));
+        return -1;
+    }
+    if (reloc) {
+#ifndef DAS_NATIVE
+        if (c->object_mode &&
+            (c->eval_reloc_kind == DAS_OBJ_RELOC_LOCAL_RH18 ||
+             c->eval_reloc_kind == DAS_OBJ_RELOC_SYMBOL_RH18)) {
+            c->eval_reloc_kind = c->eval_reloc_kind ==
+                DAS_OBJ_RELOC_LOCAL_RH18 ? DAS_OBJ_RELOC_LOCAL_ADDR30 :
+                DAS_OBJ_RELOC_SYMBOL_ADDR30;
+            c->eval_lh_reloc_kind = 0;
+        } else
+#endif
+        {
+            fprintf(stderr, DAS_DIAG("das: global relocation\n",
+                "das: global relocation requires host DOBJ2 output\n"));
+            return -1;
+        }
+    }
+#ifndef DAS_NATIVE
+    if (c->object_mode)
+        c->obj_extended = 1;
+#endif
+    return 0;
+}
+
+static int parse_giw_word(struct asmctx *c, char *q, unsigned int dot,
+                          das_word_t *w, int *reloc)
+{
+    if (!*skipws(q) || eval_expr_octal(c, q, dot, w, reloc) ||
+        global_address(c, *w, *reloc))
+        return -1;
+    *w &= DAS_ADDR30_MASK;
+    return 0;
+}
 static int parse_exind_word(struct asmctx *c, char *q, unsigned int dot,
                             das_word_t *w, int *reloc)
 {
@@ -7075,66 +7123,46 @@ static int parse_exind_word(struct asmctx *c, char *q, unsigned int dot,
         eval_expr(c, a, dot, &xr, &r2) != 0 ||
         eval_expr(c, b, dot, &y, &r3) != 0)
         return -1;
-    if (r1 || r2 || r3) {
+    if (r1 || r2) {
         fprintf(stderr, DAS_DIAG("das: reloc EXIND\n",
-            "das: relocation in %%EXIND is unsupported\n"));
+            "das: relocation in %%EXIND control fields is unsupported\n"));
         return -1;
     }
-    if (ind > DAS_W(1) || xr > DAS_W(017) || y > DAS_W(07777777777)) {
+    if (ind > DAS_W(1) || xr > DAS_W(017) || global_address(c, y, r3)) {
         fprintf(stderr, DAS_DIAG("das: bad EXIND\n",
             "das: %%EXIND field out of range\n"));
         return -1;
     }
     *w = ((ind & DAS_W(1)) << 34) |
          ((xr & DAS_W(017)) << 30) |
-         (y & DAS_W(07777777777));
-    *reloc = 0;
+         (y & DAS_ADDR30_MASK);
+    *reloc = r3;
     return 0;
 }
-/* OWGBP selectors encode a byte width and slot on a word boundary.
- * All defined selectors form five contiguous ranges.  Decode their
- * position arithmetically instead of retaining a 3-word table entry
- * for each individual selector in the resident phase-2 image.
- */
-static int owgbp_lookup(int sel, int *size, int *low)
+/* All 26 architectural selectors are contiguous, including the five
+ * before-first-byte selectors. Preserve the selector verbatim. */
+static int parse_owgbp_word(struct asmctx *c, char *q, unsigned int dot,
+                             das_word_t *w, int *reloc)
 {
-    int bits;
-    int first;
-
-    if (sel >= 046 && sel <= 053) {
-        bits = 6;
-        first = 046;
-    } else if (sel >= 062 && sel <= 066) {
-        bits = 7;
-        first = 062;
-    } else if (sel >= 055 && sel <= 060) {
-        bits = 8;
-        first = 055;
-    } else if (sel >= 070 && sel <= 073) {
-        bits = 9;
-        first = 070;
-    } else if (sel >= 075 && sel <= 076) {
-        bits = 18;
-        first = 075;
-    } else
-        return 0;
-    *size = bits;
-    *low = (sel - first) * bits;
-    return 1;
-}
-static int parse_owgbp_word(struct asmctx *c, char *q, unsigned int dot, das_word_t *w, int *reloc) {
     char *a, *b;
-    int sel, size, low, high;
-    das_word_t y;
+    das_word_t sel;
+    int r;
+
     q = skipws(q);
-    if (!split2(q, &a, &b)) return -1;
-    sel = (int)parse_octal_u(a);
-    if (!owgbp_lookup(sel, &size, &low)) { fprintf(stderr, DAS_DIAG("das: bad owgbp\n", "das: unknown OWGBP selector %o\n"), sel); return -1; }
+    if (!split2(q, &a, &b) || !*a ||
+        eval_expr_octal(c, a, dot, &sel, &r))
+        return -1;
+    if (r || sel < DAS_W(045) || sel > DAS_W(076)) {
+        fprintf(stderr, DAS_DIAG("das: bad owgbp\n",
+            "das: unknown or relocatable OWGBP selector\n"));
+        return -1;
+    }
     b = skipws(b);
-    if (pref_i(b, "GIW", 3)) b = skipws(b + 3);
-    if (eval_expr_octal(c, b, dot, &y, reloc)) return -1;
-    high = low + size - 1;
-    *w = das_mask36(((das_word_t)(35 - high) << 30) | ((das_word_t)size << 24) | (y & DAS_HALF_MASK));
+    if (pref_i(b, "GIW", 3) && isspace((unsigned char)b[3]))
+        b = skipws(b + 3);
+    if (parse_giw_word(c, b, dot, w, reloc))
+        return -1;
+    *w |= sel << 30;
     return 0;
 }
 static int write_words_host(FILE *f, const das_word_t *words,
@@ -7351,6 +7379,28 @@ static int output_object_relocate_word(struct das_output *out,
     output_object_location(out, off, &loc_sec, &loc_off);
     target_sec = c->eval_target_sec;
     addend = c->eval_addend;
+#ifndef DAS_NATIVE
+    if (c->eval_reloc_kind == DAS_OBJ_RELOC_LOCAL_ADDR30 ||
+        c->eval_reloc_kind == DAS_OBJ_RELOC_SYMBOL_ADDR30) {
+        if (c->eval_reloc_kind == DAS_OBJ_RELOC_LOCAL_ADDR30) {
+            if (target_sec == -1)
+                target_sec = loc_sec; /* Dot, not its displaced value. */
+            if (target_sec < DAS_SEC_TEXT || target_sec > DAS_SEC_BSS)
+                return -1;
+            addend = das_mask36(addend - sec_base(c, target_sec));
+        }
+        if (addend > DAS_ADDR30_MASK &&
+            das_mask36(DAS_W(0) - addend) > DAS_ADDR30_MASK) {
+            fprintf(stderr, "das: global relocation addend out of range\n");
+            return -1;
+        }
+        if (obj_reloc_add(c, loc_sec, loc_off, c->eval_reloc_kind,
+                target_sec, c->eval_symbol, addend) != 0)
+            return -1;
+        *word &= ~DAS_ADDR30_MASK;
+        return 0;
+    }
+#endif
     had_lh_reloc = c->eval_lh_reloc_kind != 0;
     had_rh_reloc = 0;
     if (had_lh_reloc) {
@@ -7881,7 +7931,7 @@ static int output_finish_object(struct das_output *out)
     }
     entry_symbol = c->entry_name[0] != 0 ?
         obj_global_find(c, c->entry_name) : 0U;
-    h[0] = dobj_magic_word("DOBJ1 ");
+    h[0] = dobj_magic_word(c->obj_extended ? "DOBJ2 " : "DOBJ1 ");
     h[1] = DAS_WORD(text_total(c), c->loc[DAS_SEC_DATA]);
     h[2] = DAS_WORD(c->loc[DAS_SEC_BSS], c->obj_global_count);
     h[3] = DAS_WORD(c->obj_reloc_count, 0U);
@@ -9050,6 +9100,7 @@ static void pass1_reset_semantics_for_ir_replay(struct asmctx *c)
 #ifndef DAS_NATIVE
     c->obj_global_count = 0U;
     c->obj_reloc_count = 0U;
+    c->obj_extended = 0;
 #endif
 }
 
