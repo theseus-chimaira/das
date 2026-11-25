@@ -3553,8 +3553,15 @@ static unsigned int literal_image_words(const char *expr, unsigned int len)
     tmp[len] = 0;
     p = skipws(tmp);
     q = p;
-    while (*q != 0 && !isspace((unsigned char)*q) && *q != ',')
+    while (*q != 0 && !isspace((unsigned char)*q) && *q != ',') {
+#ifndef DAS_NATIVE
+        /* Parenthesized pseudo-operators include their own commas.
+         * Recognize the operator even without intervening whitespace. */
+        if (*p == '%' && *q == '(')
+            break;
+#endif
         q++;
+    }
     if (q != p && literal_first_token_is_operator(p, q, 0))
         return 1U;
     if (strstr(p, ",,") != 0)
@@ -3690,6 +3697,10 @@ static int literal_first_token_is_operator(const char *expr, const char *end,
     name[copylen] = 0;
     if (opcode_name_known(name))
         return 1;
+#ifndef DAS_NATIVE
+    if (pref_i(name, "%GADDR", 6) && (prefix_ok || n == 6U))
+        return 1;
+#endif
     if ((pref_i(name, "POINT", 5) && (prefix_ok || n == 5U)) ||
         (pref_i(name, "GIW", 3) && (prefix_ok || n == 3U)) ||
         (pref_i(name, "OWGBP", 5) && (prefix_ok || n == 5U)) ||
@@ -7165,6 +7176,37 @@ static int parse_owgbp_word(struct asmctx *c, char *q, unsigned int dot,
     *w |= sel << 30;
     return 0;
 }
+#ifndef DAS_NATIVE
+/* Software-tagged global address, not a hardware byte pointer.  Keep
+ * the six-bit tag independent of the signed ADDR30 relocation addend.
+ * Parentheses protect the comma in .long lists and literal pools. */
+static int parse_gaddr_word(struct asmctx *c, char *q, unsigned int dot,
+                             das_word_t *w, int *reloc)
+{
+    char *a;
+    char *b;
+    char *end;
+    das_word_t tag;
+    int r;
+
+    q = skipws(q);
+    if (*q++ != '(')
+        return -1;
+    end = strrchr(q, ')');
+    if (!end || *skipws(end + 1))
+        return -1;
+    *end = 0;
+    if (!split2(q, &a, &b) || !*a ||
+        eval_expr_octal(c, a, dot, &tag, &r) || r || tag > DAS_W(077)) {
+        fprintf(stderr, "das: %%GADDR requires an absolute six-bit tag\n");
+        return -1;
+    }
+    if (parse_giw_word(c, b, dot, w, reloc))
+        return -1;
+    *w |= tag << 30;
+    return 0;
+}
+#endif
 static int write_words_host(FILE *f, const das_word_t *words,
                             unsigned int count)
 {
@@ -8223,6 +8265,10 @@ parse_data_word_radix(struct asmctx *c, char *p, unsigned int dot,
         return parse_owgbp_word(c, skipws(q + 5), dot, w, reloc);
     if (pref_i(q, "%EXIND", 6))
         return parse_exind_word(c, skipws(q + 6), dot, w, reloc);
+#ifndef DAS_NATIVE
+    if (pref_i(q, "%GADDR", 6) && (q[6] == '(' || isspace((unsigned char)q[6])))
+        return parse_gaddr_word(c, q + 6, dot, w, reloc);
+#endif
     ir = parse_instruction_word(c, q, dot, w, reloc, 0);
     if (ir)
         return ir < 0 ? -1 : 0;
