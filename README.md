@@ -118,3 +118,11 @@ Remaining planned work is in "TODO.md".
 ## License
 
 DAS is distributed under the MIT license. See "LICENCE".
+
+### KA10 hardware read-in
+
+`dxrconvert --ka10-readin -b 060 loader.dxr loader.pt` emits a single
+counted hardware read-in block: IOWD, relocated initialized words, and
+final JRST to the entry. The count includes JRST; no software RIM header,
+checksum, or interleaved PDP-6 DATAI is emitted. `--no-go` and blocks
+which wrap the physical address space are refused.

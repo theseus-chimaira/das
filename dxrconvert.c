@@ -24,11 +24,11 @@ struct dxr_file {
     unsigned int text_words;
 };
 
-enum out_mode { MODE_NONE, MODE_SIMH, MODE_RIM, MODE_PT, MODE_PDP6_READIN };
+enum out_mode { MODE_NONE, MODE_SIMH, MODE_RIM, MODE_PT, MODE_PDP6_READIN, MODE_KA10_READIN };
 
 static void usage(void)
 {
-    fprintf(stderr, "usage: dxrconvert (--simh|--rim|--pt|--pdp6-readin) -b base_octal [-g] in.dxr out\n");
+    fprintf(stderr, "usage: dxrconvert (--simh|--rim|--pt|--pdp6-readin|--ka10-readin) -b base_octal [-g] in.dxr out\n");
 }
 
 static int streq(const char *a, const char *b)
@@ -296,6 +296,27 @@ static int write_pdp6_readin(FILE *out, const struct dxr_file *dxr,
     return ferror(out) ? 2 : 0;
 }
 
+/* KA10 hardware read-in: one counted block, including the final JRST.
+ * Unlike RIM10B there is no software loader or checksum, and unlike
+ * PDP-6 executable read-in there are no interleaved DATAI instructions.
+ * The caller has checked that the entire block fits physical addresses. */
+static int write_ka10_readin(FILE *out, const struct dxr_file *dxr,
+                            const unsigned long long *image, unsigned int base)
+{
+    unsigned int i, count;
+    unsigned long long jrst;
+
+    count = dxr->image_words + 1U;
+    if (write_rim_word(out, DXR_WORD(0U - count, base - 1U)) < 0)
+        return 2;
+    for (i = 0; i < dxr->image_words; i++)
+        if (write_rim_word(out, image[i]) < 0) return 2;
+    jrst = (((unsigned long long)0254U) << 27) |
+           (unsigned long long)(base + dxr->entry);
+    if (write_rim_word(out, jrst) < 0) return 2;
+    return ferror(out) ? 2 : 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *infile, *outfile;
@@ -316,6 +337,7 @@ int main(int argc, char **argv)
         else if (streq(argv[argi], "--rim")) mode = MODE_RIM;
         else if (streq(argv[argi], "--pt")) mode = MODE_PT;
         else if (streq(argv[argi], "--pdp6-readin")) mode = MODE_PDP6_READIN;
+        else if (streq(argv[argi], "--ka10-readin")) mode = MODE_KA10_READIN;
         else if (streq(argv[argi], "-b") || streq(argv[argi], "--base")) {
             argi++;
             if (argi >= argc) { usage(); return 2; }
@@ -336,6 +358,13 @@ int main(int argc, char **argv)
     if (rc != 0) return rc;
     rc = validate(&dxr);
     if (rc != 0) { free(dxr.words); return rc; }
+    if (mode == MODE_KA10_READIN &&
+        (!go_flag || dxr.image_words >= 0400000U ||
+         dxr.image_words > DXR_HALF_MASK - base)) {
+        fprintf(stderr, "dxrconvert: KA10 read-in requires a final JRST and a nonwrapping counted block\n");
+        free(dxr.words);
+        return 1;
+    }
     rc = make_abs_image(&dxr, base, &image);
     if (rc != 0) { free(dxr.words); return rc; }
     out = fopen(outfile, mode == MODE_SIMH ? "w" : "wb");
@@ -348,6 +377,8 @@ int main(int argc, char **argv)
     if (mode == MODE_SIMH) rc = write_simh(out, &dxr, image, base, go_flag);
     else if (mode == MODE_PDP6_READIN)
         rc = write_pdp6_readin(out, &dxr, image, base, go_flag);
+    else if (mode == MODE_KA10_READIN)
+        rc = write_ka10_readin(out, &dxr, image, base);
     else rc = write_rim10b(out, &dxr, image, base, go_flag);
     if (fclose(out) != 0 && rc == 0) rc = 2;
     free(image);
