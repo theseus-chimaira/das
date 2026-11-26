@@ -179,6 +179,16 @@ static int validate(const struct dxr_file *dxr,
         tag = DXR_RH(dxr->words[2]);
         value = DXR_LH(dxr->words[2]);
         if (tag == 0647022U) { /* SIXBIT /TX2/ */
+            /* v1976: bit 17 is mutable-RAM eligibility, not text size.
+             * Preserve the historical large-image check outside this
+             * DAIMOS-sized marked format. */
+            if ((value & 0400000U) && image_words <= 0300000U) {
+                if (DXR_RH(w1) & 0400000U) {
+                    fprintf(stderr, "dxrcheck: RT_REQUIRED cannot be mutable-compressible\n");
+                    return 1;
+                }
+                value &= 0377777U;
+            }
             if (value > image_words) {
                 fprintf(stderr, "dxrcheck: text size exceeds image size\n");
                 return 1;

@@ -160,6 +160,15 @@ static int validate(struct dxr_file *dxr)
     } else {
         dxr->header_words = 3U;
         dxr->text_words = DXR_LH(dxr->words[2]);
+        /* v1976 marked DAIMOS DXR2. Conversion to a raw image does not
+         * retain executable policy, but must use the true text count. */
+        if ((dxr->text_words & 0400000U) && dxr->image_words <= 0300000U) {
+            if (DXR_RH(dxr->words[1]) & 0400000U) {
+                fprintf(stderr, "dxrconvert: RT_REQUIRED cannot be mutable-compressible\n");
+                return 1;
+            }
+            dxr->text_words &= 0377777U;
+        }
         if (dxr->text_words > dxr->image_words) {
             fprintf(stderr, "dxrconvert: text size exceeds image size\n");
             return 1;
