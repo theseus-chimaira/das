@@ -4824,30 +4824,35 @@ static int parse_ea(struct asmctx *c, char *s, unsigned int dot, unsigned int *y
     return 0; } if (pref_i(s, "POINT", 5) && isspace((unsigned char)s[5])) { char *c1, *c2; s = skipws(s + 5); c1 = strchr(s, ','); if (!c1) return -1; c2 = strchr(c1 + 1, ','); if (c2) *c2 = 0; return parse_ea(c, skipws(c1 + 1), dot, y, ind, xr, reloc); } (void)parse_index_suffix(s, xr); if (!*s) { *y = 0; *reloc = 0; return 0; } if (eval_expr_octal(c, s, dot, &v, reloc) != 0) return -1; *y = DAS_MASK18(v); return 0; }
 #endif
 
+/* A parenthesis after a complete field introduces a new BYTE width;
+ * after an operator it belongs to the field's arithmetic expression.
+ * Whitespace separates fields only outside expressions. */
+static int byte_expr_operator(int c)
+{
+    return c != 0 && strchr("+-*/%&|^~!<>", c) != NULL;
+}
+
 static char *byte_field_end(char *p)
 {
-    char *q;
-    int prev;
+    char *q = p;
+    int prev = 0, depth = 0;
 
-    q = p;
-    prev = 0;
     while (*q) {
-        if (*q == ',')
+        if (*q == '(') {
+            if (!depth && !byte_expr_operator(prev)) break;
+            ++depth;
+        } else if (*q == ')' && depth) {
+            --depth;
+        } else if (!depth && *q == ',') {
             break;
-        if (*q == '(')
-            break;
-        if (isspace((unsigned char)*q)) {
-            char *n;
-
-            n = skipws(q);
-            if (*n == '+' || *n == '-' || prev == '+' || prev == '-') {
-                q = n;
-                continue;
-            }
-            break;
+        } else if (isspace((unsigned char)*q)) {
+            char *n = skipws(q);
+            if (!depth && !byte_expr_operator(*n)
+              && !byte_expr_operator(prev)) break;
+            q = n;
+            continue;
         }
-        prev = (unsigned char)*q;
-        q++;
+        prev = (unsigned char)*q++;
     }
     return q;
 }
@@ -8082,6 +8087,7 @@ static int emit_byte_directive(struct asmctx *c, char *p, unsigned int dot,
     unsigned int wi;
     das_word_t word, v, mask;
     int r;
+    char save;
 
     used = 0;
     wi = 0U;
@@ -8093,9 +8099,16 @@ static int emit_byte_directive(struct asmctx *c, char *p, unsigned int dot,
         if (byte_size_prefix(c, &q, dot + wi, &size) != 0) return -1;
         e = byte_field_end(q);
         if (e == q) break;
-        if (*e) *e++ = 0;
+        /* Preserve the delimiter: an adjacent (width) belongs to the
+         * next field, not to the current expression. */
+        save = *e;
+        *e = 0;
         rtrim(q);
-        if (eval_expr(c, q, dot + wi, &v, &r) != 0) return -1;
+        if (eval_expr(c, q, dot + wi, &v, &r) != 0) {
+            *e = save;
+            return -1;
+        }
+        *e = save;
         if (r) {
             fprintf(stderr, DAS_DIAG("das: .byte relocation\n", "das: relocation inside .byte is unsupported in DXR V1\n"));
             return -1;
